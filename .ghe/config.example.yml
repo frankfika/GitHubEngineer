@@ -1,0 +1,26 @@
+repo:
+  owner: "your-org"
+  name: "your-repo"
+  # full_name: "your-org/your-repo"
+
+github:
+  # Optional for public repositories; recommended to avoid GitHub API limits.
+  token: ${GITHUB_TOKEN}
+
+model:
+  provider: "openai-compatible"
+  # Leave LLM_BASE_URL unset for OpenAI's default endpoint.
+  base_url: ${LLM_BASE_URL}
+  api_key: ${LLM_API_KEY}
+  model_name: ${LLM_MODEL}
+
+output:
+  format: "markdown"
+  output_dir: "reports"
+  title: "Maintainer Brief - {date}"
+
+analysis:
+  lookback_days: 7
+  top_n: 3
+  min_issue_age_hours: 24
+  max_issues_for_llm: 50

@@ -1,0 +1,70 @@
+name: "Maintainer Intelligence"
+description: "Generate a weekly Maintainer Brief for GitHub issues"
+author: "GitHub Engineer contributors"
+
+inputs:
+  github-token:
+    description: "GitHub token with issue read access"
+    required: true
+  llm-base-url:
+    description: "LLM API base URL (OpenAI compatible)"
+    required: false
+    default: ""
+  llm-api-key:
+    description: "LLM API key"
+    required: true
+  llm-model:
+    description: "Model name"
+    required: false
+    default: "gpt-4o-mini"
+  config-path:
+    description: "Path to config file"
+    required: false
+    default: ".ghe/config.yml"
+  repo:
+    description: "Repository full name, defaults to the current repository"
+    required: false
+    default: ""
+  report-path:
+    description: "Glob for generated reports to upload, relative to the caller repository"
+    required: false
+    default: "reports/*.md"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install dependencies
+      shell: bash
+      run: |
+        pip install -r "${{ github.action_path }}/requirements.txt"
+
+    - name: Generate Maintainer Brief
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        LLM_BASE_URL: ${{ inputs.llm-base-url }}
+        LLM_API_KEY: ${{ inputs.llm-api-key }}
+        LLM_MODEL: ${{ inputs.llm-model }}
+        CONFIG_PATH: ${{ inputs.config-path }}
+        TARGET_REPO: ${{ inputs.repo }}
+        CURRENT_REPO: ${{ github.repository }}
+      run: |
+        args=(--config "$CONFIG_PATH")
+        if [ -n "$TARGET_REPO" ]; then
+          args+=(--repo "$TARGET_REPO")
+        elif [ -n "$CURRENT_REPO" ]; then
+          args+=(--repo "$CURRENT_REPO")
+        fi
+        PYTHONPATH="${{ github.action_path }}" python -m src.main "${args[@]}"
+
+    - name: Upload report
+      uses: actions/upload-artifact@v4
+      with:
+        name: maintainer-brief
+        path: ${{ inputs.report-path }}
+        if-no-files-found: error
