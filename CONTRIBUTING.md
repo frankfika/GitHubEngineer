@@ -11,7 +11,7 @@
 ## 如何提 PR
 
 1. Fork 仓库, 从 `main` 切出 feature 分支 (`feat/xxx` 或 `fix/xxx`)。
-2. 开发完成后跑 `pytest tests/ -v` 确认 8/8 pass。
+2. 开发完成后跑 `make test` (或 `pytest tests/ -v`) 确认 **68/68** pass。
 3. 一个 PR 只做一件事, 描述写清"改了什么 / 为什么 / 怎么验证"。
 4. 关联对应 issue (如有), 在 review 通过前保持可 rebase。
 
@@ -20,20 +20,20 @@
 ```bash
 git clone <your-fork-url>
 cd github-engineer
-python3 -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-pip install -e ".[dev]"
+make venv
+make install-dev
 ```
 
-`pip install -e ".[dev]` 会同时装上 `pytest` 和 `pytest-cov`, 并把 `ghe` 命令注册到当前 venv。
+`make install-dev` 会同时装上 `pytest` 和 `pytest-cov`, 并把 `ghe` 命令注册到当前 venv。
 
 ## 测试
 
 ```bash
-pytest tests/ -v                   # 全部 8 个测试
+make test                          # 全部 68 个测试
 pytest tests/test_config.py -v     # 单文件
 pytest -k delegation -v            # 按名字筛选
+make test-fast                     # CI 友好, 不带 -v
+make smoke                         # e2e smoke (list-decisions + config parse)
 ```
 
 新功能必须带测试。`src/` 下的业务代码改动请同步更新 `tests/`。

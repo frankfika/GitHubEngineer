@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Trend baseline.** `src/history.py` saves each brief as a versioned JSON
+  snapshot under `.ghe/history/` and computes a week-over-week diff
+  (new / resolved / score-shifted issues, new / dropped clusters). The diff is
+  rendered into `brief.trend` on the next run so maintainers can see what
+  changed since the previous brief. Corrupt history files are skipped
+  silently.
+- **Cost control.** `LLMClient.last_usage` captures `prompt_tokens`,
+  `completion_tokens`, and `total_tokens` from the provider's response.
+  `IssueAnalyzer.max_prompt_chars` (default 90 000, ~30 K tokens) truncates
+  the lowest-signal candidates and reports the drop count. The Markdown
+  report gains a `## Cost` section listing the actual numbers.
+- **Multi-repo support.** `get_target_repos` accepts a top-level `repos:`
+  list in `.ghe/config.yml`, a comma-separated `--repo owner/a,b/c`, or the
+  legacy single-repo form. The CLI now writes one report per repository
+  using the same LLM client.
+- **Read-only subcommands.** `ghe --show-latest [--repo owner/name]`
+  prints the most recent brief Markdown to stdout; `ghe --list-decisions`
+  prints a one-line summary of every record in
+  `.ghe/memory/decisions.yml`. Both bypass the API key requirement.
+- **3-step pipeline.** `ghe --pipeline` runs brief → prepare → delegate
+  dry-run in one shot for the top issue of the last (or only) target repo.
+- **Packaging polish.** `Makefile` with `venv` / `install` / `install-dev`
+  / `test` / `test-fast` / `lint` / `smoke` / `clean` targets. `README.md`
+  adds a cost estimate and a multi-repo config example. `examples/sample_report.md`
+  is now a real-shape brief, not a placeholder.
+
+### Changed
+
+- `report_generator.py` now renders every recommended issue as a clickable
+  `[[#N](url)]` link instead of a bare `#N:`. Falls back to the plain form
+  when the model-supplied URL is empty.
+- `analyzer.py` filters out issues younger than `analysis.min_issue_hours`
+  (default 24, previously declared but never read) so reports stop
+  recommending issues the moment they are opened.
+- `github_client.get_open_issues` walks `get_issues()` with explicit
+  per-page fetching and a `max_pages` cap (default 10) so 100 K+ issue
+  repositories cannot exhaust the GitHub API quota.
+- `main.py` catches the `HistoryError` family so a single corrupt history
+  file never breaks the user-facing report.
+
+### Tests
+
+- 68 pytest tests (was 8). New files: `test_github_client.py`,
+  `test_llm_client.py`, `test_analyzer.py`, `test_delegation.py`,
+  `test_history.py`, `test_main_subcommands.py`, `test_performance_50_issues.py`.
+  `test_report_generator.py` grew from one to four cases.
+
 ## [0.1.0] - 2026-07-21
 
 ### Added
@@ -40,7 +89,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   claude-code | generic-cli`). The plan is safe by default; `--execute` is
   required to start the agent, and task content is passed over standard input
   rather than composed into a shell command.
-- **Tests.** Eight pytest tests cover config loading, report generation, the
+- **Tests.** 12 pytest tests cover config loading, report generation, the
   three v0.2-v0.4 capabilities, and the `main()` end-to-end integration paths
   (success, no recent issues, failure). Run with `pytest tests/ -v`.
 - **Documentation.** `README.md` covers local usage, the GitHub Action, config

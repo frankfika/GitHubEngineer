@@ -161,6 +161,70 @@ Markdown includes a clickable `[[#N](url)]` link for every recommended issue,
 a separate Quick Wins section, possible duplicate clusters, the missing-info
 list, the week-over-week trend line, and the prompt/completion token usage.
 
+## Why not just use GitHub Copilot / Agentic Workflows?
+
+Copilot and Agentic Workflows are *execution* tools: they read a single
+issue and ship a PR. GitHub Engineer is a *decision* tool: it reads every
+open issue in a repository, scores them against your goals and guardrails,
+and tells you **which** three are worth a maintainer's attention this week —
+with evidence. The two are complementary, not competitive. Use GitHub
+Engineer to pick the next issue, then hand the prepared task to Copilot,
+Claude Code, or Codex with `ghe --pipeline` (or `--prepare-issue` + `--delegate-task`).
+
+## FAQ
+
+**Q: Does it comment on issues or apply labels?**
+No. The tool is read-only by default. It only writes local files
+(`reports/*.md`, `.ghe/history/*.json`, `tasks/*.md`) and the optional
+`$GITHUB_STEP_SUMMARY` when running as an Action.
+
+**Q: Does it work on private repositories?**
+Yes, as long as the supplied `GITHUB_TOKEN` has `repo` (or `public_repo`)
+scope on the target. The tool does not store the token anywhere outside the
+runtime memory of the CLI process.
+
+**Q: How much does one run cost?**
+Under **$0.10** with `gpt-4o-mini` and around **$0.20–$0.40** with
+`claude-sonnet-4` for a 50-issue weekly brief. See the `## Cost` section
+of the generated report for the exact numbers.
+
+**Q: Can I run it on multiple repositories at once?**
+Yes. Set `repos:` to a list in `.ghe/config.yml`, or pass
+`--repo owner/a,owner/b,owner/c`. Each repository gets its own report file
+under `reports/`.
+
+**Q: How do I look at the most recent brief without re-running?**
+`ghe --show-latest [--repo owner/name] [--config path/to/config.yml]`
+prints the newest brief Markdown to stdout. It does not require an LLM key.
+
+**Q: How do I record a maintainer decision so the same work is not proposed again?**
+`ghe --record-decision rejected --theme "dark mode" --reason "Not on this year's roadmap"`.
+Run `ghe --list-decisions` to see what is currently in memory.
+
+**Q: Does the tool support GitLab?**
+Not in v0.x. The decision layer is platform-agnostic; only `src/github_client.py`
+would need a sibling for GitLab.
+
+## Troubleshooting
+
+- **"Missing model.api_key"**: set `LLM_API_KEY` in the environment, or add
+  `model.api_key` to `.ghe/config.yml`. Read-only commands (`--show-latest`,
+  `--list-decisions`) do not need a key.
+- **"LLM request failed"**: check `LLM_BASE_URL`, `LLM_API_KEY`, and
+  `LLM_MODEL`. Some providers reject custom `base_url`; try the canonical
+  endpoint.
+- **"GitHub API rate limit exceeded"**: supply a `GITHUB_TOKEN` (free
+  tier raises the limit from 60/hr to 5 000/hr) or wait for the reset.
+- **"Could not parse LLM JSON"**: the model returned prose. Try a model with
+  stronger JSON instruction following, or lower `analysis.max_issues_for_llm`
+  so the prompt is shorter and easier to follow.
+- **Empty `## Top Priorities`**: the lookback window is too narrow, or every
+  issue is filtered by `decision_memory` (rejected themes). Run
+  `ghe --list-decisions` to inspect.
+- **Brief includes a `--prepare-issue <N>` error**: issue N is not in the
+  current brief's Top N. Re-run the brief first, then call `--prepare-issue`
+  with one of the recommended numbers.
+
 ## Limits
 
 - v0.1 supports GitHub issues only.

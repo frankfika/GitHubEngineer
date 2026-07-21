@@ -3,6 +3,13 @@ repo:
   name: "your-repo"
   # full_name: "your-org/your-repo"
 
+# Optional v1.0 multi-repo form.  When this list is non-empty the CLI writes
+# one brief per entry.  A comma-separated ``--repo owner/a,b/c`` overrides it
+# for a single invocation.
+# repos:
+#   - "your-org/your-repo"
+#   - "your-org/your-other-repo"
+
 github:
   # Optional for public repositories; recommended to avoid GitHub API limits.
   token: ${GITHUB_TOKEN}
@@ -15,7 +22,7 @@ model:
   model_name: ${LLM_MODEL}
 
 output:
-  format: "markdown"
+  format: "markdown"  # markdown | action-summary
   output_dir: "reports"
   title: "Maintainer Brief - {date}"
 
@@ -24,3 +31,11 @@ analysis:
   top_n: 3
   min_issue_age_hours: 24
   max_issues_for_llm: 50
+  # Roughly 30K tokens for an OpenAI-compatible chat prompt. The analyzer
+  # drops the lowest-signal candidates when the payload would exceed this.
+  max_prompt_chars: 90000
+
+# Optional: directory holding the JSON history snapshots. Created on first
+# write; the diff between the most recent snapshot and the new run is
+# rendered into the Trend section of the report.
+# history_dir: ".ghe/history"

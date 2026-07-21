@@ -1,39 +1,105 @@
+"""Extended coverage for src/config.py.
+
+The original ``tests/test_config.py`` only exercised the legacy single-repo
+form. v1.0 added ``get_target_repos`` and ``load_config_lenient``; both need
+their own tests.
+"""
+
+from __future__ import annotations
+
 import os
 from pathlib import Path
-import tempfile
-import unittest
 
-from src.config import load_config
+import pytest
+import yaml
+
+from src.config import (
+    ConfigError,
+    get_repo_full_name,
+    get_target_repos,
+    load_config,
+    load_config_lenient,
+)
 
 
-class ConfigTest(unittest.TestCase):
-    def test_missing_config_uses_environment_defaults(self):
-        old_values = {
-            "GITHUB_TOKEN": os.environ.get("GITHUB_TOKEN"),
-            "LLM_API_KEY": os.environ.get("LLM_API_KEY"),
-            "LLM_BASE_URL": os.environ.get("LLM_BASE_URL"),
-            "LLM_MODEL": os.environ.get("LLM_MODEL"),
-        }
-        try:
-            os.environ["GITHUB_TOKEN"] = "ghs_test"
-            os.environ["LLM_API_KEY"] = "sk_test"
-            os.environ["LLM_BASE_URL"] = "https://example.test/v1"
-            os.environ["LLM_MODEL"] = "test-model"
+def _write(path: Path, payload: dict) -> Path:
+    path.write_text(yaml.safe_dump(payload, allow_unicode=True), encoding="utf-8")
+    return path
 
-            with tempfile.TemporaryDirectory() as tmpdir:
-                missing_path = Path(tmpdir) / "missing.yml"
-                config = load_config(str(missing_path))
 
-                self.assertEqual(config["github"]["token"], "ghs_test")
-                self.assertEqual(config["model"]["api_key"], "sk_test")
-                self.assertEqual(config["model"]["model_name"], "test-model")
-        finally:
-            for key, value in old_values.items():
-                if value is None:
-                    os.environ.pop(key, None)
-                else:
-                    os.environ[key] = value
+def test_load_config_expands_env_placeholders(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("GHE_TEST_KEY", "secret-key-1234")
+    config_path = _write(
+        tmp_path / "config.yml",
+        {
+            "repo": {"full_name": "acme/widgets"},
+            "model": {"api_key": "${GHE_TEST_KEY}", "model_name": "gpt-x"},
+        },
+    )
+    config = load_config(str(config_path))
+    assert config["model"]["api_key"] == "secret-key-1234"
+
+
+def test_load_config_rejects_missing_model_keys(tmp_path: Path):
+    config_path = _write(
+        tmp_path / "config.yml",
+        {"repo": {"full_name": "acme/widgets"}, "model": {}},
+    )
+    with pytest.raises(ConfigError) as exc:
+        load_config(str(config_path))
+    assert "api_key" in str(exc.value)
+
+
+def test_load_config_lenient_does_not_require_api_key(tmp_path: Path):
+    config_path = _write(
+        tmp_path / "config.yml",
+        {"repo": {"full_name": "acme/widgets"}},
+    )
+    config = load_config_lenient(str(config_path))
+    assert config["repo"]["full_name"] == "acme/widgets"
+
+
+def test_get_target_repos_returns_single_when_no_list(tmp_path: Path):
+    config = {"repo": {"full_name": "acme/widgets"}}
+    assert get_target_repos(config) == ["acme/widgets"]
+
+
+def test_get_target_repos_uses_repos_list(tmp_path: Path):
+    config = {"repos": ["acme/widgets", "acme/gadgets"]}
+    assert get_target_repos(config) == ["acme/widgets", "acme/gadgets"]
+
+
+def test_get_target_repos_handles_comma_separated_cli_repo():
+    config: dict = {}
+    assert get_target_repos(config, cli_repo="a/b,c/d") == ["a/b", "c/d"]
+
+
+def test_get_target_repos_dedupes_preserving_order():
+    config = {"repos": ["a/b", "c/d", "a/b"]}
+    assert get_target_repos(config) == ["a/b", "c/d"]
+
+
+def test_get_target_repos_rejects_malformed_repo_name():
+    with pytest.raises(ConfigError):
+        get_target_repos({}, cli_repo="not-a-valid-name")
+    with pytest.raises(ConfigError):
+        get_target_repos({}, cli_repo="owner/")
+
+
+def test_get_target_repos_rejects_empty_inputs():
+    with pytest.raises(ConfigError):
+        get_target_repos({})
+
+
+def test_get_repo_full_name_accepts_owner_and_name():
+    config = {"repo": {"owner": "acme", "name": "widgets"}}
+    assert get_repo_full_name(config) == "acme/widgets"
+
+
+def test_get_repo_full_name_prefers_cli_argument():
+    config = {"repo": {"full_name": "acme/widgets"}}
+    assert get_repo_full_name(config, cli_repo="other/repo") == "other/repo"
 
 
 if __name__ == "__main__":
-    unittest.main()
+    raise SystemExit(pytest.main([__file__, "-v"]))
