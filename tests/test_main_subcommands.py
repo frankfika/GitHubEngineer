@@ -98,6 +98,45 @@ class ShowLatestSubcommandTest(unittest.TestCase):
                 sys.argv = previous_argv
 
 
+class InitSubcommandTest(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+
+        self._temp_dir = tempfile.TemporaryDirectory()
+        self.directory = Path(self._temp_dir.name)
+        self.previous_cwd = Path.cwd()
+        import os
+        os.chdir(self.directory)
+        # Make sure we always start without a user config.
+        user_config = self.directory / ".ghe" / "config.yml"
+        if user_config.exists():
+            user_config.unlink()
+        self.previous_argv = sys.argv
+
+    def tearDown(self):
+        import os
+        os.chdir(self.previous_cwd)
+        sys.argv = self.previous_argv
+        self._temp_dir.cleanup()
+
+    def test_init_writes_starter_config(self):
+        sys.argv = ["ghe", "--init"]
+        with patch("sys.stdout") as stdout:
+            self.assertEqual(main(), 0)
+        text = "".join(call.args[0] for call in stdout.write.call_args_list)
+        self.assertIn("Wrote .ghe/config.yml", text)
+        self.assertTrue((self.directory / ".ghe" / "config.yml").exists())
+
+    def test_init_refuses_to_overwrite_existing_config(self):
+        target = self.directory / ".ghe" / "config.yml"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("# user customisation", encoding="utf-8")
+        sys.argv = ["ghe", "--init"]
+        with patch("sys.stdout") as stdout:
+            self.assertEqual(main(), 1)
+        self.assertEqual(target.read_text(encoding="utf-8"), "# user customisation")
+
+
 class ListDecisionsSubcommandTest(unittest.TestCase):
     def setUp(self):
         import tempfile

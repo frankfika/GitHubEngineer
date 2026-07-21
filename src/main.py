@@ -71,6 +71,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Print decision memory records and exit.",
     )
+    parser.add_argument(
+        "--init",
+        action="store_true",
+        help="Write a starter .ghe/config.yml from the example template, then exit.",
+    )
     return parser.parse_args()
 
 
@@ -83,6 +88,8 @@ def main() -> int:
             return delegate_task(args)
         if args.list_decisions:
             return list_decisions(args)
+        if args.init:
+            return init_config()
         if args.show_latest:
             return show_latest(load_config_lenient(args.config), args)
         config = load_config(args.config)
@@ -240,6 +247,26 @@ def list_decisions(args: argparse.Namespace) -> int:
         print(f"{index}. [{record.status.upper()}] {timestamp} | {scope}")
         if record.reason:
             print(f"   reason: {record.reason}")
+    return 0
+
+
+def init_config() -> int:
+    """Write a starter ``.ghe/config.yml`` next to the example template.
+
+    The copy is intentionally non-destructive: if a config already exists
+    the command refuses to overwrite it. The user can then edit
+    ``.ghe/config.yml`` to point at their repository and LLM provider.
+    """
+
+    target = Path(".ghe/config.yml")
+    if target.exists():
+        print(f"{target} already exists; refusing to overwrite.")
+        return 1
+    source = Path(__file__).resolve().parent.parent / ".ghe" / "config.example.yml"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+    print(f"Wrote {target} from {source.name}.")
+    print("Next: edit repo.owner / repo.name, set LLM_API_KEY, then run `ghe`.")
     return 0
 
 

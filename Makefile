@@ -8,7 +8,7 @@ PYTHON ?= python3
 VENV   ?= .venv
 BIN     := $(VENV)/bin
 
-.PHONY: help venv install install-dev test test-fast lint format smoke clean
+.PHONY: help venv install install-dev test test-fast lint format smoke clean bench bench-cost init-config
 
 help: ## Show this help message
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -37,6 +37,15 @@ format: ## Auto-format the package and tests with the standard library
 smoke: install-dev ## Quick e2e: list decisions and read the example config
 	$(BIN)/python -m src.main --list-decisions
 	$(BIN)/python -c "import yaml; yaml.safe_load(open('.ghe/config.example.yml')); print('config.example.yml parses')"
+
+bench: install-dev ## Benchmark the analyze -> render pipeline
+	$(BIN)/python benchmarks/perf.py
+
+bench-cost: install-dev ## Estimate brief cost for a given model and issue count
+	$(BIN)/python benchmarks/cost.py
+
+init-config: ## Write a starter .ghe/config.yml from the example template
+	@test -f .ghe/config.yml || cp .ghe/config.example.yml .ghe/config.yml && echo "Wrote .ghe/config.yml"
 
 clean: ## Remove the local venv and Python build artefacts
 	rm -rf $(VENV) .pytest_cache .ghe/history .ghe/memory/decisions.yml

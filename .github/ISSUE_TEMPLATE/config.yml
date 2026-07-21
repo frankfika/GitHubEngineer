@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://github.com/OpenCSG/github-engineer/blob/main/README.md
+    about: Installation, configuration, and the rationale for every command.
+  - name: Discussions
+    url: https://github.com/OpenCSG/github-engineer/discussions
+    about: For open-ended questions and "how do you handle X" threads.
+  - name: Security disclosures
+    url: https://github.com/OpenCSG/github-engineer/blob/main/SECURITY.md
+    about: Report vulnerabilities privately rather than as a public issue.
