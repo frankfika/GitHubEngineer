@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from pydantic import ValidationError
 
@@ -25,17 +25,20 @@ class IssueAnalyzer:
         max_issues_for_llm: int = 50,
         top_n: int = 3,
         decision_memory: DecisionMemory | None = None,
+        min_issue_age_hours: int = 0,
     ):
         self.llm = llm_client
         self.max_issues_for_llm = max_issues_for_llm
         self.top_n = top_n
         # Loading is read-only; analysis must never create or update memory.
         self.decision_memory = decision_memory or DecisionMemory.load()
+        self.min_issue_age_hours = max(0, int(min_issue_age_hours))
 
     def analyze(self, issues: list[IssueMetrics], repo_name: str, lookback_days: int) -> MaintainerBrief:
         """Generate a complete Maintainer Brief."""
 
         eligible_issues = self.decision_memory.filter_issues(issues)
+        eligible_issues = self._filter_by_age(eligible_issues)
         candidates = self._select_candidates(eligible_issues)
         clusters = self._find_obvious_clusters(candidates)
         if not candidates:
@@ -62,6 +65,14 @@ class IssueAnalyzer:
             missing_info_issues=missing_info,
             trend="Trend comparison will become more useful once decision memory is enabled.",
         )
+
+    def _filter_by_age(self, issues: list[IssueMetrics]) -> list[IssueMetrics]:
+        """Drop issues newer than ``min_issue_age_hours`` to reduce noise."""
+
+        if self.min_issue_age_hours <= 0:
+            return issues
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=self.min_issue_age_hours)
+        return [issue for issue in issues if issue.created_at <= cutoff]
 
     def _select_candidates(self, issues: list[IssueMetrics]) -> list[IssueMetrics]:
         scored = sorted(
@@ -126,8 +137,13 @@ class IssueAnalyzer:
             source_issue = candidate_by_number.get(priority.issue_number)
             if source_issue is None or priority.issue_number in seen_numbers:
                 continue
-            # Titles come from GitHub rather than the model so that the report links to a real issue.
-            validated.append(priority.model_copy(update={"title": source_issue.title}))
+            # Titles and URLs come from GitHub rather than the model so that the
+            # report links to a real issue and reflects the current title.
+            validated.append(
+                priority.model_copy(
+                    update={"title": source_issue.title, "url": source_issue.url}
+                )
+            )
             seen_numbers.add(priority.issue_number)
 
         priorities = validated

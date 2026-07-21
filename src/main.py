@@ -62,6 +62,7 @@ def main() -> int:
         lookback_days = int(analysis_config.get("lookback_days", 7))
         max_issues = int(analysis_config.get("max_issues_for_llm", 50))
         top_n = int(analysis_config.get("top_n", 3))
+        min_issue_age_hours = int(analysis_config.get("min_issue_age_hours", 24))
 
         github_token = config.get("github", {}).get("token") or os.getenv("GITHUB_TOKEN")
         model_config = config["model"]
@@ -72,8 +73,15 @@ def main() -> int:
         )
 
         since = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+        # Cap how many GitHub pages we walk. 30 issues per page * 10 pages = 300
+        # issues is enough for any realistic weekly brief and protects against
+        # runaway pagination on 100k+ issue repos.
         gh_client = GitHubClient(github_token, repo_full_name)
-        raw_issues = gh_client.get_open_issues(since=since, max_issues=max(100, max_issues))
+        raw_issues = gh_client.get_open_issues(
+            since=since,
+            max_issues=max(100, max_issues),
+            max_pages=10,
+        )
         issues = [IssueMetrics(**gh_client.get_issue_metrics(issue)) for issue in raw_issues]
 
         analyzer = IssueAnalyzer(
@@ -81,6 +89,7 @@ def main() -> int:
             max_issues_for_llm=max_issues,
             top_n=top_n,
             decision_memory=DecisionMemory.load(args.memory_path),
+            min_issue_age_hours=min_issue_age_hours,
         )
         brief = analyzer.analyze(issues, repo_full_name, lookback_days)
         report = ReportGenerator().generate_markdown(brief, repo_full_name)
@@ -105,8 +114,34 @@ def main() -> int:
         ValidationError,
         ValueError,
     ) as exc:
-        print(f"Error: {exc}", file=sys.stderr)
+        print(format_error(exc), file=sys.stderr)
         return 1
+
+
+# Map of substrings → fix-it hint. Keep generic enough to avoid leaking
+# credentials but specific enough to tell the user the next step.
+_ERROR_HINTS: tuple[tuple[str, str], ...] = (
+    ("Missing model.api_key", "Set the LLM_API_KEY environment variable or add model.api_key to .ghe/config.yml."),
+    ("Missing model.model_name", "Set the LLM_MODEL environment variable or add model.model_name to .ghe/config.yml."),
+    ("rate limit", "Wait for the GitHub API rate limit to reset, or supply a GITHUB_TOKEN with higher quota."),
+    ("Could not access repository", "Verify the repository owner/name and that GITHUB_TOKEN has read access."),
+    ("Failed to fetch issues", "Check that the repository exists and the GITHUB_TOKEN has 'repo' or 'public_repo' scope."),
+    ("LLM request failed", "Check LLM_BASE_URL, LLM_API_KEY, and LLM_MODEL in the environment or .ghe/config.yml."),
+    ("Could not parse LLM JSON", "The model returned non-JSON. Try a different model or lower the issue count (analysis.max_issues_for_llm)."),
+    ("is not in this brief's recommended priorities", "Re-run the brief first (without --prepare-issue), then call --prepare-issue with one of the issue numbers from the new report."),
+    ("--agent-repo-path is required", "Pass --agent-repo-path /absolute/path/to/target-repo when delegating."),
+    ("--generic-executable is required", "Pass --generic-executable /absolute/path/to/agent-cli when --adapter generic-cli is used."),
+)
+
+
+def format_error(exc: BaseException) -> str:
+    """Render an exception as a one-line, actionable error message."""
+
+    message = str(exc).strip() or exc.__class__.__name__
+    for needle, hint in _ERROR_HINTS:
+        if needle in message:
+            return f"Error: {message}\nHint: {hint}"
+    return f"Error: {message}"
 
 
 def record_decision(args: argparse.Namespace) -> int:

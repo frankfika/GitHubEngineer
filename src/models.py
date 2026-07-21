@@ -52,6 +52,9 @@ class IssuePriority(BaseModel):
     reason: str
     user_impact: str
     estimated_effort: Effort = "medium"
+    # Injected from the source GitHub issue by the analyzer so the report
+    # can render a clickable link even when the model only returns a number.
+    url: str = ""
 
 
 class IssueCluster(BaseModel):

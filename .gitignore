@@ -7,3 +7,5 @@ __pycache__/
 reports/
 dist/
 build/
+*.egg-info/
+.ghe/memory/decisions.yml

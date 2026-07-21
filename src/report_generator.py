@@ -75,8 +75,13 @@ class ReportGenerator:
 
     @staticmethod
     def _priority_lines(index: int, item: IssuePriority) -> list[str]:
+        heading = (
+            f"### {index}. [#{item.issue_number}]({item.url}): {item.title}"
+            if item.url
+            else f"### {index}. #{item.issue_number}: {item.title}"
+        )
         return [
-            f"### {index}. #{item.issue_number}: {item.title}",
+            heading,
             "",
             f"- Score: {item.priority_score:.1f}/10",
             f"- Reason: {item.reason}",

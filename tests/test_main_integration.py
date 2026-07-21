@@ -33,6 +33,7 @@ class MainIntegrationTest(unittest.TestCase):
                         "lookback_days": 7,
                         "max_issues_for_llm": 10,
                         "top_n": 3,
+                        "min_issue_age_hours": 0,
                     },
                     "output": {
                         "format": output_format,
@@ -103,7 +104,7 @@ class MainIntegrationTest(unittest.TestCase):
                 reports = list((directory / "reports").glob("acme_widgets_*.md"))
                 self.assertEqual(len(reports), 1)
                 report = reports[0].read_text(encoding="utf-8")
-                self.assertIn("#42: Application crashes when saving", report)
+                self.assertIn("[#42](https://github.com/acme/widgets/issues/42): Application crashes when saving", report)
                 self.assertIn("Saving failures affect several users.", report)
                 self.assertEqual(summary_path.read_text(encoding="utf-8"), report + "\n")
             finally:
