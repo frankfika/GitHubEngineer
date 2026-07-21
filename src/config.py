@@ -38,6 +38,25 @@ def load_config(config_path: str | None = None) -> dict[str, Any]:
     return config
 
 
+def load_config_lenient(config_path: str | None = None) -> dict[str, Any]:
+    """Load YAML config and expand env vars without running full validation.
+
+    Used by read-only subcommands (``--show-latest``, ``--list-decisions``)
+    that need to know the output directory or repo list but do not require
+    a working LLM key. The returned config is still safe to use for
+    ``get_target_repos`` and ``output.output_dir`` lookups.
+    """
+
+    load_dotenv()
+    path = Path(config_path or os.getenv("GHE_CONFIG_PATH") or ".ghe/config.yml")
+    if not path.exists():
+        raw = _default_config()
+    else:
+        with path.open("r", encoding="utf-8") as handle:
+            raw = yaml.safe_load(handle) or {}
+    return _replace_env(raw or {})
+
+
 def get_repo_full_name(config: dict[str, Any], cli_repo: str | None = None) -> str:
     """Return owner/name from CLI or config."""
 
@@ -52,6 +71,35 @@ def get_repo_full_name(config: dict[str, Any], cli_repo: str | None = None) -> s
     if owner and name:
         return _validate_repo_full_name(f"{owner}/{name}")
     raise ConfigError("Set repo.full_name or both repo.owner and repo.name.")
+
+
+def get_target_repos(config: dict[str, Any], cli_repo: str | None = None) -> list[str]:
+    """Return the list of ``owner/name`` repositories to brief.
+
+    A bare ``--repo owner/name,a/b`` (comma-separated) expands into multiple
+    repositories. The legacy ``repo.owner/repo.name`` form still works and
+    always produces a single-element list. A new ``repos:`` list at the root
+    of the config file is preferred for multi-repo workflows because it
+    survives across CLI invocations.
+    """
+
+    raw_list = config.get("repos")
+    if isinstance(raw_list, list) and raw_list:
+        repos = [_validate_repo_full_name(str(item)) for item in raw_list]
+    elif cli_repo and "," in cli_repo:
+        repos = [_validate_repo_full_name(part) for part in cli_repo.split(",") if part.strip()]
+    else:
+        repos = [get_repo_full_name(config, cli_repo)]
+    if not repos:
+        raise ConfigError("No target repositories configured.")
+    # De-duplicate while preserving order so brief output is deterministic.
+    seen: set[str] = set()
+    unique: list[str] = []
+    for repo in repos:
+        if repo not in seen:
+            seen.add(repo)
+            unique.append(repo)
+    return unique
 
 
 def _validate_repo_full_name(value: str) -> str:

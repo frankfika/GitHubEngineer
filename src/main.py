@@ -9,7 +9,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from .analyzer import AnalyzerError, IssueAnalyzer
-from .config import ConfigError, get_repo_full_name, load_config
+from .config import ConfigError, get_target_repos, load_config, load_config_lenient
 from .delegation import (
     ClaudeCodeAdapter,
     CodexAdapter,
@@ -18,6 +18,13 @@ from .delegation import (
     execute_delegation,
 )
 from .github_client import GitHubClient, GitHubClientError
+from .history import (
+    HistoryError,
+    compute_diff,
+    load_latest,
+    record_from_brief,
+    save_history,
+)
 from .llm_client import LLMClient, LLMClientError
 from .memory_manager import DecisionMemory, DecisionMemoryError
 from .models import DecisionRecord, IssueMetrics
@@ -28,7 +35,11 @@ from .task_preparer import TaskPreparer, TaskPreparationError
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate a Maintainer Brief for GitHub issues.")
     parser.add_argument("--config", default=None, help="Path to .ghe/config.yml")
-    parser.add_argument("--repo", default=None, help="Repository full name, for example owner/name")
+    parser.add_argument(
+        "--repo",
+        default=None,
+        help="Repository full name, for example owner/name. Comma-separated for multiple repos.",
+    )
     parser.add_argument("--memory-path", default=".ghe/memory/decisions.yml", help="Decision memory YAML path")
     parser.add_argument("--record-decision", choices=("accepted", "rejected", "deferred"))
     parser.add_argument("--issue-number", type=int, action="append", default=[])
@@ -45,6 +56,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--agent-repo-path", help="Local repository directory for delegated work")
     parser.add_argument("--generic-executable", help="Explicit allowlisted executable for generic-cli")
     parser.add_argument("--execute", action="store_true", help="Actually start the selected coding agent")
+    parser.add_argument(
+        "--pipeline",
+        action="store_true",
+        help="After a brief is generated, prepare a task for the top issue and plan a delegation in one shot.",
+    )
+    parser.add_argument(
+        "--show-latest",
+        action="store_true",
+        help="Print the most recent brief for the target repo to stdout and exit.",
+    )
+    parser.add_argument(
+        "--list-decisions",
+        action="store_true",
+        help="Print decision memory records and exit.",
+    )
     return parser.parse_args()
 
 
@@ -55,8 +81,12 @@ def main() -> int:
             return record_decision(args)
         if args.delegate_task:
             return delegate_task(args)
+        if args.list_decisions:
+            return list_decisions(args)
+        if args.show_latest:
+            return show_latest(load_config_lenient(args.config), args)
         config = load_config(args.config)
-        repo_full_name = get_repo_full_name(config, args.repo)
+        target_repos = get_target_repos(config, args.repo)
 
         analysis_config = config.get("analysis", {})
         lookback_days = int(analysis_config.get("lookback_days", 7))
@@ -71,40 +101,78 @@ def main() -> int:
             model_config["api_key"],
             model_config["model_name"],
         )
+        history_dir = os.getenv("GHE_HISTORY_DIR", ".ghe/history")
+        history_enabled = os.path.isdir(history_dir) or _writable_dir(history_dir)
 
-        since = datetime.now(timezone.utc) - timedelta(days=lookback_days)
-        # Cap how many GitHub pages we walk. 30 issues per page * 10 pages = 300
-        # issues is enough for any realistic weekly brief and protects against
-        # runaway pagination on 100k+ issue repos.
-        gh_client = GitHubClient(github_token, repo_full_name)
-        raw_issues = gh_client.get_open_issues(
-            since=since,
-            max_issues=max(100, max_issues),
-            max_pages=10,
-        )
-        issues = [IssueMetrics(**gh_client.get_issue_metrics(issue)) for issue in raw_issues]
+        last_repo = target_repos[-1]
+        all_outputs: list[Path] = []
+        last_brief = None
+        last_issues: list[IssueMetrics] = []
 
-        analyzer = IssueAnalyzer(
-            llm_client,
-            max_issues_for_llm=max_issues,
-            top_n=top_n,
-            decision_memory=DecisionMemory.load(args.memory_path),
-            min_issue_age_hours=min_issue_age_hours,
-        )
-        brief = analyzer.analyze(issues, repo_full_name, lookback_days)
-        report = ReportGenerator().generate_markdown(brief, repo_full_name)
-        output_file = write_report(report, repo_full_name, config)
-        write_step_summary(report, config)
+        for repo_full_name in target_repos:
+            since = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+            # Cap how many GitHub pages we walk. 30 issues per page * 10 pages = 300
+            # issues is enough for any realistic weekly brief and protects against
+            # runaway pagination on 100k+ issue repos.
+            gh_client = GitHubClient(github_token, repo_full_name)
+            raw_issues = gh_client.get_open_issues(
+                since=since,
+                max_issues=max(100, max_issues),
+                max_pages=10,
+            )
+            issues = [IssueMetrics(**gh_client.get_issue_metrics(issue)) for issue in raw_issues]
 
-        print(f"Report generated: {output_file}")
-        if args.prepare_issue is not None:
-            task_file = prepare_task(args, brief.top_priorities, issues, llm_client, repo_full_name)
+            analyzer = IssueAnalyzer(
+                llm_client,
+                max_issues_for_llm=max_issues,
+                top_n=top_n,
+                decision_memory=DecisionMemory.load(args.memory_path),
+                min_issue_age_hours=min_issue_age_hours,
+            )
+            prior_record = load_latest(history_dir, repo_full_name) if history_enabled else None
+            brief = analyzer.analyze(issues, repo_full_name, lookback_days)
+            current_record = record_from_brief(
+                repo_full_name=repo_full_name,
+                generated_at=brief.generated_at,
+                top_issue_numbers=[item.issue_number for item in brief.top_priorities],
+                top_issue_scores={
+                    f"#{item.issue_number}": item.priority_score for item in brief.top_priorities
+                },
+                cluster_names=[cluster.cluster_name for cluster in brief.issue_clusters],
+                new_issues_count=brief.new_issues_count,
+            )
+            if prior_record is not None:
+                try:
+                    diff = compute_diff(prior_record, current_record)
+                    brief = brief.model_copy(update={"trend": diff.summary(brief.new_issues_count)})
+                except (HistoryError, ValueError):
+                    pass
+            try:
+                save_history(history_dir, current_record)
+            except HistoryError:
+                pass
+            report = ReportGenerator().generate_markdown(brief, repo_full_name)
+            output_file = write_report(report, repo_full_name, config)
+            write_step_summary(report, config)
+            print(f"Report generated: {output_file}")
+            all_outputs.append(output_file)
+            last_brief = brief
+            last_issues = issues
+
+        # Prepare / pipeline actions target the last (or only) repo. Multi-repo
+        # callers who want to chain a task per repo should loop with --repo.
+        if last_brief is not None and args.prepare_issue is not None:
+            task_file = prepare_task(args, last_brief.top_priorities, last_issues, llm_client, last_repo)
             print(f"Prepared task generated: {task_file}")
+            if args.pipeline:
+                args.delegate_task = str(task_file)
+                return delegate_task(args)
         return 0
     except (
         AnalyzerError,
         ConfigError,
         GitHubClientError,
+        HistoryError,
         LLMClientError,
         DecisionMemoryError,
         TaskPreparationError,
@@ -142,6 +210,65 @@ def format_error(exc: BaseException) -> str:
         if needle in message:
             return f"Error: {message}\nHint: {hint}"
     return f"Error: {message}"
+
+
+def _writable_dir(path: str) -> bool:
+    """Return True if ``path`` is either a writable directory or creatable now."""
+
+    candidate = Path(path)
+    if candidate.exists():
+        return candidate.is_dir() and os.access(candidate, os.W_OK)
+    parent = candidate.parent if candidate.parent != candidate else Path(".")
+    return parent.is_dir() and os.access(parent, os.W_OK)
+
+
+def list_decisions(args: argparse.Namespace) -> int:
+    """Print every decision in memory as a compact, single-line summary."""
+
+    memory = DecisionMemory.load(args.memory_path)
+    if not memory.records:
+        print(f"No decisions recorded at {memory.path}.")
+        return 0
+    for index, record in enumerate(memory.records, 1):
+        topics: list[str] = []
+        if record.issue_numbers:
+            topics.append("issues " + ", ".join(f"#{n}" for n in record.issue_numbers))
+        if record.themes:
+            topics.append("themes " + ", ".join(record.themes))
+        scope = "; ".join(topics) or "no scope"
+        timestamp = record.created_at.strftime("%Y-%m-%d") if record.created_at else "unknown"
+        print(f"{index}. [{record.status.upper()}] {timestamp} | {scope}")
+        if record.reason:
+            print(f"   reason: {record.reason}")
+    return 0
+
+
+def show_latest(config: dict[str, Any], args: argparse.Namespace) -> int:
+    """Print the most recent brief Markdown for the target repo to stdout."""
+
+    from .config import get_target_repos  # local import to avoid a cycle at module load
+
+    repos = get_target_repos(config, args.repo)
+    output_dir = Path(config.get("output", {}).get("output_dir", "reports"))
+    if not output_dir.exists():
+        raise ConfigError(f"Output directory {output_dir} does not exist; no briefs to show yet.")
+    shown = 0
+    for repo in repos:
+        safe = repo.replace("/", "_")
+        candidates = sorted(
+            (path for path in output_dir.glob(f"{safe}_*.md") if path.is_file()),
+            key=lambda path: path.name,
+            reverse=True,
+        )
+        if not candidates:
+            print(f"# No brief found for {repo} under {output_dir}/", file=sys.stderr)
+            continue
+        latest = candidates[0]
+        print(latest.read_text(encoding="utf-8"), end="")
+        shown += 1
+    if shown == 0:
+        return 1
+    return 0
 
 
 def record_decision(args: argparse.Namespace) -> int:

@@ -23,12 +23,15 @@ Requirements: Python 3.11 or later, a GitHub token that can read issues, and an
 OpenAI-compatible API key. Public repositories can be read without a GitHub
 token, but using one avoids the low unauthenticated API limit.
 
-Create and activate an isolated environment, then install dependencies:
+Install with `pip` (recommended for users) or with `pip install -e .` if you
+intend to hack on the code:
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
+# or, after `pip install -e .[dev]`, use the `ghe` entry point:
+python -m src.main --help
 ```
 
 Create a config:
@@ -134,7 +137,29 @@ Important fields:
 - `output.output_dir`: where Markdown reports are written
 - `analysis.lookback_days`: how far back to inspect updated issues
 - `analysis.max_issues_for_llm`: how many candidate issues to send to the model
+- `analysis.min_issue_age_hours`: drop issues newer than this (default 24)
+- `analysis.top_n`: how many top priorities to surface (default 3)
+- `repos`: optional list form (`- owner/name`) for multi-repo briefs (v1.0)
 - `.ghe/memory/decisions.yml`: optional, versioned maintainer decisions
+- `.ghe/history/`: optional trend baseline directory; created on first run
+
+## Cost
+
+A single brief against a 50-issue repo typically costs well under **$0.10**
+with `gpt-4o-mini` and around **$0.20–$0.40** with `claude-sonnet-4` based on
+the default `max_issues_for_llm=50` and `max_prompt_chars=90_000` budget. The
+report's `## Cost` section prints the exact prompt and completion token counts
+for the run, and the analyzer silently drops the lowest-signal issues when the
+prompt would otherwise exceed the budget. You can cap spend by lowering
+`analysis.max_issues_for_llm` or by pinning a cheaper model via
+`LLM_MODEL`/`model.model_name`.
+
+## Example Output
+
+See `examples/sample_report.md` for the shape of a real brief. The rendered
+Markdown includes a clickable `[[#N](url)]` link for every recommended issue,
+a separate Quick Wins section, possible duplicate clusters, the missing-info
+list, the week-over-week trend line, and the prompt/completion token usage.
 
 ## Limits
 

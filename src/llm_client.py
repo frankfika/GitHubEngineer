@@ -20,6 +20,9 @@ class LLMClient:
             kwargs["base_url"] = base_url
         self.client = OpenAI(**kwargs)
         self.model_name = model_name
+        # Most-recent token usage reported by the provider, used by callers
+        # that want to surface cost information in the final report.
+        self.last_usage: dict[str, int] = {}
 
     def generate(self, prompt: str, system: str | None = None) -> str:
         """Generate text from a prompt."""
@@ -38,12 +41,29 @@ class LLMClient:
         except (APIError, APITimeoutError) as exc:
             raise LLMClientError(f"LLM request failed: {exc}") from exc
 
+        self._capture_usage(response)
         if not response.choices:
             raise LLMClientError("LLM returned no choices.")
         content = response.choices[0].message.content
         if not content:
             raise LLMClientError("LLM returned empty content.")
         return content
+
+    def _capture_usage(self, response: Any) -> None:
+        """Best-effort capture of OpenAI's usage object on this client.
+
+        The OpenAI SDK exposes ``response.usage`` with prompt / completion /
+        total token counts; some providers omit it. We swallow any Attribute
+        error so legacy or stub responses never break generation.
+        """
+
+        usage = getattr(response, "usage", None)
+        if usage is None:
+            return
+        for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+            value = getattr(usage, key, None)
+            if isinstance(value, int):
+                self.last_usage[key] = value
 
     def generate_json(self, prompt: str, system: str | None = None) -> dict[str, Any]:
         """Generate and parse a JSON object."""

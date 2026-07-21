@@ -77,3 +77,9 @@ class MaintainerBrief(BaseModel):
     issue_clusters: list[IssueCluster] = Field(default_factory=list)
     missing_info_issues: list[int] = Field(default_factory=list)
     trend: str = "No prior baseline is available yet."
+    # Recorded when the LLM client reports token usage; left empty otherwise
+    # so that the report and the JSON dump remain stable in offline tests.
+    token_usage: dict[str, int] = Field(default_factory=dict)
+    # Set when the analyzer had to truncate the candidate list to stay under
+    # the configured token budget; helpful for prompting users to raise it.
+    dropped_candidate_count: int = 0

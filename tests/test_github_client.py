@@ -1,0 +1,117 @@
+"""Unit tests for src/github_client.py.
+
+These tests mock PyGithub at the module boundary so they run offline and
+exercise the real pagination, rate-limit, and metric-extraction code paths
+that were previously only covered indirectly by main_integration.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from src.github_client import GitHubClient, GitHubClientError
+
+
+def _make_issue(number: int, *, is_pr: bool = False, days_ago: int = 0):
+    """Build a fake PyGithub Issue with the attributes the client reads."""
+    now = datetime.now(timezone.utc) - timedelta(days=days_ago)
+    return SimpleNamespace(
+        number=number,
+        title=f"Issue {number}",
+        body=f"Body of issue {number}",
+        created_at=now,
+        updated_at=now,
+        comments=2,
+        labels=[SimpleNamespace(name="bug")],
+        assignees=[],
+        state="open",
+        html_url=f"https://github.com/acme/widgets/issues/{number}",
+        pull_request=SimpleNamespace() if is_pr else None,
+        get_reactions=MagicMock(return_value=SimpleNamespace(totalCount=5)),
+    )
+
+
+def _make_repo(issues):
+    """Build a fake repo whose get_issues() returns a controllable paginator."""
+
+    class _Paginator:
+        def __init__(self, items):
+            self._items = list(items)
+            self._index = 0
+
+        def get_page(self, page_index):
+            # PyGithub semantics: each page is 30 items by default. We send
+            # all items on page 0 and raise IndexError on later pages.
+            if page_index == 0:
+                return self._items
+            raise IndexError(page_index)
+
+    return SimpleNamespace(get_issues=MagicMock(return_value=_Paginator(issues)))
+
+
+def test_get_open_issues_filters_prs_and_respects_max_issues():
+    repo = _make_repo(
+        [_make_issue(1), _make_issue(2, is_pr=True), _make_issue(3), _make_issue(4)]
+    )
+    with patch("src.github_client.Github") as gh_cls:
+        gh_cls.return_value.get_repo.return_value = repo
+        client = GitHubClient("token", "acme/widgets")
+        result = client.get_open_issues(max_issues=10)
+    assert [issue.number for issue in result] == [1, 3, 4]
+
+
+def test_get_open_issues_respects_since_and_short_circuits_pagination():
+    """When the first page is already older than ``since`` we must stop walking pages."""
+    repo = _make_repo([_make_issue(1, days_ago=30), _make_issue(2, days_ago=60)])
+    with patch("src.github_client.Github") as gh_cls:
+        gh_cls.return_value.get_repo.return_value = repo
+        client = GitHubClient("token", "acme/widgets")
+        recent_only = client.get_open_issues(
+            since=datetime.now(timezone.utc) - timedelta(days=7),
+            max_pages=5,
+        )
+    assert recent_only == []
+
+
+def test_get_open_issues_caps_pages_to_protect_large_repositories():
+    """The fake repo only has page 0; max_pages=1 must not loop or error."""
+    repo = _make_repo([_make_issue(1)])
+    with patch("src.github_client.Github") as gh_cls:
+        gh_cls.return_value.get_repo.return_value = repo
+        client = GitHubClient("token", "acme/widgets")
+        result = client.get_open_issues(max_pages=1)
+    assert len(result) == 1
+
+
+def test_get_issue_metrics_handles_reaction_failure():
+    from github import GithubException
+
+    issue = _make_issue(7)
+    issue.get_reactions.side_effect = GithubException(403, "rate limited", None)
+    repo = _make_repo([])
+    with patch("src.github_client.Github") as gh_cls:
+        gh_cls.return_value.get_repo.return_value = repo
+        client = GitHubClient("token", "acme/widgets")
+        metrics = client.get_issue_metrics(issue)
+    assert metrics["number"] == 7
+    assert metrics["reactions"] == 0
+    assert metrics["url"].endswith("/7")
+    assert "bug" in metrics["labels"]
+
+
+def test_get_repo_failure_surfaces_as_typed_error():
+    from github import GithubException
+
+    with patch("src.github_client.Github") as gh_cls:
+        gh_cls.return_value.get_repo.side_effect = GithubException(404, "Not Found", None)
+        with pytest.raises(GitHubClientError) as exc:
+            GitHubClient(None, "missing/repo")
+    assert "missing/repo" in str(exc.value)
+
+
+if __name__ == "__main__":
+    raise SystemExit(pytest.main([__file__, "-v"]))

@@ -26,6 +26,7 @@ class IssueAnalyzer:
         top_n: int = 3,
         decision_memory: DecisionMemory | None = None,
         min_issue_age_hours: int = 0,
+        max_prompt_chars: int = 90_000,
     ):
         self.llm = llm_client
         self.max_issues_for_llm = max_issues_for_llm
@@ -33,8 +34,12 @@ class IssueAnalyzer:
         # Loading is read-only; analysis must never create or update memory.
         self.decision_memory = decision_memory or DecisionMemory.load()
         self.min_issue_age_hours = max(0, int(min_issue_age_hours))
+        # Roughly 30K tokens for an OpenAI chat prompt; truncating the issue
+        # payload is preferable to failing the whole brief on cost overruns.
+        self.max_prompt_chars = max(1_000, int(max_prompt_chars))
 
-    def analyze(self, issues: list[IssueMetrics], repo_name: str, lookback_days: int) -> MaintainerBrief:
+    def analyze(self, issues: list[IssueMetrics], repo_name: str, lookback_days: int,
+                trend_summary: str | None = None) -> MaintainerBrief:
         """Generate a complete Maintainer Brief."""
 
         eligible_issues = self.decision_memory.filter_issues(issues)
@@ -48,11 +53,21 @@ class IssueAnalyzer:
                 summary="No open issues were updated during this period.",
                 new_issues_count=len(eligible_issues),
                 issue_clusters=[],
-                trend="No issue activity was available for comparison.",
+                trend=trend_summary or "No issue activity was available for comparison.",
             )
-        priorities, summary, missing_info = self._calculate_priorities(repo_name, candidates, clusters)
+        truncated_candidates, dropped = self._truncate_to_prompt_budget(candidates)
+        clusters = self._find_obvious_clusters(truncated_candidates)
+        priorities, summary, missing_info = self._calculate_priorities(
+            repo_name, truncated_candidates, clusters
+        )
         quick_wins = self._identify_quick_wins(priorities)
         period = f"last {lookback_days} days"
+        token_usage_raw = getattr(self.llm, "last_usage", None)
+        token_usage: dict[str, int] = (
+            {k: v for k, v in token_usage_raw.items() if isinstance(v, int)}
+            if isinstance(token_usage_raw, dict)
+            else {}
+        )
 
         return MaintainerBrief(
             generated_at=datetime.now(timezone.utc),
@@ -63,7 +78,9 @@ class IssueAnalyzer:
             quick_wins=quick_wins,
             issue_clusters=clusters,
             missing_info_issues=missing_info,
-            trend="Trend comparison will become more useful once decision memory is enabled.",
+            trend=trend_summary or "Trend comparison will become more useful once decision memory is enabled.",
+            token_usage=token_usage,
+            dropped_candidate_count=dropped,
         )
 
     def _filter_by_age(self, issues: list[IssueMetrics]) -> list[IssueMetrics]:
@@ -73,6 +90,33 @@ class IssueAnalyzer:
             return issues
         cutoff = datetime.now(timezone.utc) - timedelta(hours=self.min_issue_age_hours)
         return [issue for issue in issues if issue.created_at <= cutoff]
+
+    def _truncate_to_prompt_budget(
+        self, issues: list[IssueMetrics]
+    ) -> tuple[list[IssueMetrics], int]:
+        """Drop the lowest-signal candidates until the prompt would fit.
+
+        Returns the surviving issues and how many were dropped. We estimate
+        the per-issue size from the serialised prompt payload, which is the
+        exact figure the LLM sees, and keep the highest-ranked candidates.
+        """
+
+        if not issues:
+            return issues, 0
+        # Account for the prompt template (system + instructions) and the
+        # cluster payload. Rough upper bound; the real cost is per-issue JSON.
+        issue_budget = self.max_prompt_chars - 4_000
+        if issue_budget <= 0:
+            return [], len(issues)
+        kept: list[IssueMetrics] = []
+        used = 0
+        for issue in issues:
+            cost = len(json.dumps(issue.title, ensure_ascii=False)) + len(issue.body) + 200
+            if used + cost > issue_budget and kept:
+                break
+            kept.append(issue)
+            used += cost
+        return kept, len(issues) - len(kept)
 
     def _select_candidates(self, issues: list[IssueMetrics]) -> list[IssueMetrics]:
         scored = sorted(
