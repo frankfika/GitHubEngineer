@@ -8,5 +8,9 @@ reports/
 dist/
 build/
 *.egg-info/
+.ghe/config.yml
+.ghe/config.local.yml
 .ghe/memory/decisions.yml
 .ghe/history/
+# Never commit live tokens, even in test fixtures.
+.ghe/secrets.env

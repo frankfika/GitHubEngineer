@@ -54,6 +54,9 @@ dev = [
     "twine>=5.0",
 ]
 
+[project.gui-scripts]
+ghe-web = "src.main:main"
+
 [project.scripts]
 ghe = "src.main:main"
 

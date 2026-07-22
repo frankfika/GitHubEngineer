@@ -92,13 +92,31 @@ Plan a handoff to a local coding agent. This command is dry-run by default and
 does not start an external process:
 
 ```bash
+# Codex CLI (exec mode, reads from stdin)
 python -m src.main --delegate-task tasks/owner_name_issue_42.md \
   --adapter codex --agent-repo-path /absolute/path/to/target-repo
+
+# Claude Code (--print, reads from stdin)
+python -m src.main --delegate-task tasks/owner_name_issue_42.md \
+  --adapter claude-code --agent-repo-path /absolute/path/to/target-repo
+
+# Generic CLI: any allowlisted executable that reads the task from stdin
+python -m src.main --delegate-task tasks/owner_name_issue_42.md \
+  --adapter generic-cli --generic-executable aider \
+  --agent-repo-path /absolute/path/to/target-repo
 ```
+
+The `--adapter generic-cli` path accepts an executable name on the
+allowlist (`codex`, `claude`, `opencode`, `aider`) and forwards the task
+Markdown over standard input. Pass `--generic-executable` with the bare
+name; passing an absolute path or shell metacharacters is rejected by
+the validator.
 
 Only after reviewing the task and plan, add `--execute` to allow the selected
 agent to run. Task content is supplied over standard input; it is never composed
-into a shell command.
+into a shell command. `--execute` enforces `shell=False` and a hard 1 800 s
+default timeout (`--timeout-seconds` is not exposed yet; patch the
+`execute_delegation` default in `src/delegation.py` if you need longer).
 
 ## GitHub Action Usage
 
@@ -132,16 +150,58 @@ See `.ghe/config.example.yml`.
 
 Important fields:
 
-- `repo`: target repository
+- `repo`: target repository (`owner/name` or `owner` + `name` or `full_name`)
+- `repos`: optional list (`- owner/name`) for multi-repo briefs (v1.0); takes
+  precedence over `repo` when set
 - `model`: OpenAI-compatible model settings
 - `output.output_dir`: where Markdown reports are written
-- `analysis.lookback_days`: how far back to inspect updated issues
-- `analysis.max_issues_for_llm`: how many candidate issues to send to the model
+- `output.format`: `markdown` (default) or `action-summary`; the latter also
+  appends the report to `$GITHUB_STEP_SUMMARY` when the env var is set
+- `analysis.lookback_days`: how far back to inspect updated issues (min 1)
+- `analysis.max_issues_for_llm`: how many candidate issues to send to the
+  model (min 1, default 50)
 - `analysis.min_issue_age_hours`: drop issues newer than this (default 24)
-- `analysis.top_n`: how many top priorities to surface (default 3)
-- `repos`: optional list form (`- owner/name`) for multi-repo briefs (v1.0)
+- `analysis.top_n`: how many top priorities to surface (min 1, default 3)
+- `analysis.max_prompt_chars`: hard cap on the LLM prompt (default 90 000)
 - `.ghe/memory/decisions.yml`: optional, versioned maintainer decisions
 - `.ghe/history/`: optional trend baseline directory; created on first run
+
+## Environment variables
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `GITHUB_TOKEN` | empty | Required for private repos and recommended for public repos (avoids the 60 req/hr unauthenticated limit). |
+| `GHE_CONFIG_PATH` | `.ghe/config.yml` | Override the path to the YAML config file. Useful in CI when the file lives outside the working directory. |
+| `GHE_HISTORY_DIR` | `.ghe/history` | Override the trend baseline directory. Pass an empty string to disable the trend diff entirely. |
+| `GHE_SERVE_PORT` | `8765` | Port for `ghe --serve`. |
+| `GHE_LOG_LEVEL` | (unset) | Reserved for future use; ignored today. |
+| `GITHUB_STEP_SUMMARY` | (unset) | When set, the report is appended to the file at this path (this is what GitHub Actions uses for `$GITHUB_STEP_SUMMARY`). |
+
+## Local Web Service
+
+`ghe --serve` starts a read-only HTTP service on `127.0.0.1:8765` so
+you can browse the briefs and decision memory from a browser. Use
+`--serve-host 0.0.0.0` to expose it on the LAN.
+
+```bash
+ghe --serve --serve-host 127.0.0.1
+# github-engineer serving on http://127.0.0.1:8765
+```
+
+| Route | Method | Purpose |
+| --- | --- | --- |
+| `/` | `GET` | Index of all briefs as JSON. |
+| `/briefs` | `GET` | Same as `/`. |
+| `/brief/<owner>/<repo>` | `GET` | Latest brief for the repository, returned as Markdown. |
+| `/decisions` | `GET` | Decision memory as JSON. |
+| `/decisions.txt` | `GET` | Decision memory as plain text (one line per record). |
+| `/decisions` | `POST` | Record a new decision. JSON body with `status` (`accepted` / `rejected` / `deferred`), `theme`, `reason`, `goal`, `guardrail`, `issue_number`. Returns 201 + the persisted record. |
+| `/healthz` | `GET` | Liveness probe for load balancers. |
+
+The service is intentionally minimal: no auth, bind to `127.0.0.1` by
+default, no write paths except `POST /decisions` (which writes to the
+same `.ghe/memory/decisions.yml` as the CLI). For a longer-running
+service, run it under `systemd`, `tmux`, or a process manager.
 
 ## Cost
 

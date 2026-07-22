@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import yaml
 
-from src.main import main, show_latest
+from src.main import main, show_latest, _safe_local_directory
 
 
 class ShowLatestSubcommandTest(unittest.TestCase):

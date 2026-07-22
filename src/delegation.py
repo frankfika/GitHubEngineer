@@ -208,6 +208,7 @@ def execute_delegation(
     timeout_seconds: int = 1_800,
     allowed_root: str | Path | None = None,
     allowed_executables: Sequence[str] | None = None,
+    max_output_bytes: int = 10 * 1024 * 1024,
 ) -> DelegationResult:
     """Execute a previously created plan only after explicit caller opt-in.
 
@@ -215,6 +216,12 @@ def execute_delegation(
     list and ``shell=False`` so task Markdown cannot become shell syntax.
     A custom Generic CLI must be repeated in ``allowed_executables`` here;
     this makes the execution approval independent of the dry-run adapter.
+
+    ``max_output_bytes`` caps the amount of stdout / stderr the function
+    will keep in memory. A coding agent that emits a multi-gigabyte diff
+    would otherwise pin the process. The cap is enforced by draining the
+    pipes ourselves rather than relying on ``subprocess.run``'s
+    ``capture_output=True``, which would buffer the entire stream.
     """
 
     if not allow_execution:
@@ -225,6 +232,8 @@ def execute_delegation(
         raise DelegationError("Only plans created by a dry-run adapter may be executed.")
     if not 1 <= timeout_seconds <= 7_200:
         raise DelegationError("timeout_seconds must be between 1 and 7200.")
+    if max_output_bytes < 1_024:
+        raise DelegationError("max_output_bytes must be at least 1024 to fit a meaningful transcript.")
 
     # Revalidate deserialized or manually-created plans at the execution gate.
     repo = _validate_repo_path(plan.repo_path, allowed_root=allowed_root)
@@ -232,27 +241,106 @@ def execute_delegation(
     executable = _validate_executable(plan.command[0], allowlist)
     command = (executable, *_validate_static_arguments(plan.command[1:]))
 
+    # We stream stdout / stderr through bounded buffers so a runaway
+    # coding agent cannot exhaust the parent process's memory.
+    stdout_buffer: list[str] = []
+    stderr_buffer: list[str] = []
+    dropped_state = {"stdout": 0, "stderr": 0}
+
+    def _drain(stream, sink: list[str], label: str) -> None:
+        """Read ``stream`` line by line into ``sink`` up to ``max_output_bytes``.
+
+        ``dropped_state[label]`` is incremented every time a chunk
+        arrives after the buffer is already full, so the main thread can
+        report the truncation in the result. Accepts any iterable of
+        str (``file`` objects, ``iter([...])``), so tests can pass a
+        list iterator and avoid the file's ``close``.
+        """
+        total = 0
+        for chunk in stream:
+            if not chunk:
+                break
+            if total >= max_output_bytes:
+                dropped_state[label] += 1
+                continue
+            sink.append(chunk)
+            total += len(chunk)
+        close = getattr(stream, "close", None)
+        if close is not None:
+            try:
+                close()
+            except OSError:
+                pass
+
     try:
-        completed = subprocess.run(
+        process = subprocess.Popen(
             command,
             cwd=repo,
-            input=plan.task_markdown,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            capture_output=True,
             shell=False,
-            timeout=timeout_seconds,
-            check=False,
+            bufsize=1,
         )
     except FileNotFoundError as exc:
         raise DelegationError(f"Approved executable was not found: {executable}") from exc
-    except subprocess.TimeoutExpired as exc:
-        raise DelegationError(f"Delegated CLI exceeded the {timeout_seconds}s timeout.") from exc
     except OSError as exc:
         raise DelegationError(f"Could not start delegated CLI: {exc}") from exc
 
+    try:
+        process.stdin.write(plan.task_markdown)
+        process.stdin.close()
+    except OSError as exc:
+        process.kill()
+        raise DelegationError(f"Could not write task to delegated CLI stdin: {exc}") from exc
+
+    import threading
+
+    stdout_thread = threading.Thread(
+        target=_drain,
+        args=(process.stdout, stdout_buffer, "stdout"),
+        daemon=True,
+    )
+    stderr_thread = threading.Thread(
+        target=_drain,
+        args=(process.stderr, stderr_buffer, "stderr"),
+        daemon=True,
+    )
+    stdout_thread.start()
+    stderr_thread.start()
+
+    try:
+        return_code = process.wait(timeout=timeout_seconds)
+    except subprocess.TimeoutExpired as exc:
+        process.kill()
+        stdout_thread.join(timeout=2)
+        stderr_thread.join(timeout=2)
+        # Preserve the partial output so a debugging user can see how far
+        # the agent got before the timeout fired.
+        truncated = (
+            f"\n[truncated after {max_output_bytes} bytes]"
+            if (dropped_state["stdout"] or dropped_state["stderr"])
+            else ""
+        )
+        raise DelegationError(
+            f"Delegated CLI exceeded the {timeout_seconds}s timeout. "
+            f"Partial stdout: {len(stdout_buffer)} chunks, stderr: {len(stderr_buffer)} chunks.{truncated}"
+        ) from exc
+
+    stdout_thread.join()
+    stderr_thread.join()
+
+    stdout_text = "".join(stdout_buffer)
+    stderr_text = "".join(stderr_buffer)
+    if dropped_state["stdout"]:
+        stdout_text += f"\n[dropped {dropped_state['stdout']} stdout chunks after {max_output_bytes} bytes]"
+    if dropped_state["stderr"]:
+        stderr_text += f"\n[dropped {dropped_state['stderr']} stderr chunks after {max_output_bytes} bytes]"
+
     return DelegationResult(
         plan=plan,
-        return_code=completed.returncode,
-        stdout=completed.stdout,
-        stderr=completed.stderr,
+        return_code=return_code,
+        stdout=stdout_text,
+        stderr=stderr_text,
     )

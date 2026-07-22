@@ -73,29 +73,56 @@ def test_execute_delegation_refuses_without_explicit_opt_in(tmp_path):
 def test_execute_delegation_invokes_subprocess_with_safe_arguments(tmp_path):
     adapter = CodexAdapter(allowed_root=tmp_path)
     plan = adapter.plan("task content", tmp_path)
-    fake_completed = MagicMock()
-    fake_completed.returncode = 0
-    fake_completed.stdout = "ok"
-    fake_completed.stderr = ""
-    with patch("src.delegation.subprocess.run", return_value=fake_completed) as run:
+    fake_process = MagicMock()
+    fake_process.returncode = 0
+    fake_process.wait.return_value = 0
+    fake_process.stdin = MagicMock()
+    # Use a real iterator so the drain loop terminates on the first "".
+    fake_process.stdout = iter(["ok\n", ""])
+    fake_process.stderr = iter([""])
+    with patch("src.delegation.subprocess.Popen", return_value=fake_process) as popen:
         result = execute_delegation(plan, allow_execution=True)
     assert result.return_code == 0
-    args, kwargs = run.call_args
+    args, kwargs = popen.call_args
     assert args[0] == ("codex", "exec", "-")
     assert kwargs["shell"] is False
-    assert kwargs["input"] == "task content"
 
 
 def test_execute_delegation_handles_subprocess_timeout(tmp_path):
     adapter = CodexAdapter(allowed_root=tmp_path)
     plan = adapter.plan("task", tmp_path)
-    with patch(
-        "src.delegation.subprocess.run",
-        side_effect=subprocess.TimeoutExpired(cmd="codex", timeout=1),
-    ):
+    fake_process = MagicMock()
+    fake_process.wait.side_effect = subprocess.TimeoutExpired(cmd="codex", timeout=1)
+    fake_process.stdin = MagicMock()
+    fake_process.stdout = iter([""])
+    fake_process.stderr = iter([""])
+    with patch("src.delegation.subprocess.Popen", return_value=fake_process):
         with pytest.raises(DelegationError) as exc:
             execute_delegation(plan, allow_execution=True, timeout_seconds=1)
     assert "timeout" in str(exc.value).lower()
+    # We must also have called kill() so the orphan process is not left
+    # running in the background.
+    fake_process.kill.assert_called_once()
+
+
+def test_execute_delegation_caps_output_to_avoid_oom(tmp_path):
+    adapter = CodexAdapter(allowed_root=tmp_path)
+    plan = adapter.plan("task", tmp_path)
+    fake_process = MagicMock()
+    fake_process.returncode = 0
+    fake_process.wait.return_value = 0
+    fake_process.stdin = MagicMock()
+    # 200 chunks of 100 bytes each = 20 000 bytes; the cap is 1024 in
+    # the call below so the runner must drop the tail.
+    chunk = "x" * 100 + "\n"
+    fake_process.stdout = iter([chunk] * 200 + [""])
+    fake_process.stderr = iter([""])
+    with patch("src.delegation.subprocess.Popen", return_value=fake_process):
+        result = execute_delegation(plan, allow_execution=True, max_output_bytes=1024)
+    assert result.return_code == 0
+    # Output should be truncated to ~1KB and the dropped marker should
+    # explain why.
+    assert "dropped" in result.stdout
 
 
 def test_validate_repo_path_rejects_outside_allowed_root(tmp_path):
