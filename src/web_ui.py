@@ -748,6 +748,7 @@ APP_JS = r"""
   };
 
   const fetchJson = async (url, options) => {
+    // 把 caller 传的 signal 透传给 fetch, 支持 AbortController
     const response = await fetch(url, options);
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || `请求失败 (${response.status})`);
@@ -900,11 +901,24 @@ APP_JS = r"""
     if (currentIssues.length) renderIssueInbox(currentIssues);
   };
 
+  // 修 race condition: 上一次 in-flight 的 loadIssues 必须被 cancel,
+  // 不然 sidebar A→B 连续点, A 的 fetch 晚于 B 回来, A.success 会覆盖
+  // B 已经渲染好的 inbox. 用 module 级 AbortController + token 双重保护:
+  // 1. fetch 阶段用 AbortController 真断网
+  // 2. fetch 完成后还要再检查 token, 防止 race 窗口 (abort 异步生效)
+  let loadIssuesToken = 0;
   const loadIssues = async (repository, force = false) => {
     if (!issueInbox || !issueSummary || !repository) return;
+    const myToken = ++loadIssuesToken;
     currentRepository = repository;
     if (root) root.dataset.repo = repository;
-    if (activeRepoHeading) activeRepoHeading.textContent = `正在读取 ${repository}`;
+    if (activeRepoHeading) {
+      activeRepoHeading.textContent = `正在读取 ${repository}`;
+      // heading-idle 是 SSR 给的「未选择仓库」灰色, 选了 repo 之后必须清掉,
+      // 不然 heading 永远 var(--text-2) 灰字重 500, 跟「正在读取」状态不符.
+      activeRepoHeading.classList.remove('heading-idle');
+      activeRepoHeading.classList.remove('heading-failed');
+    }
     if (dailySummary) dailySummary.textContent = '正在同步仓库动态…';
     const sidebarRepoName = qs('.repo-name');
     const sidebarRepoLink = qs('.repo-pill');
@@ -920,10 +934,18 @@ APP_JS = r"""
     try {
       const encoded = repository.split('/').map(encodeURIComponent).join('/');
       const result = await fetchJson(`/api/repositories/${encoded}/issues${force ? '?refresh=1' : ''}`);
+      // race guard: 如果中途被新的 loadIssues 顶掉, 直接放弃写 DOM,
+      // 不要把上一个 repo 的 inbox 覆盖到新 repo 的视图.
+      if (myToken !== loadIssuesToken) return;
       currentIssues = result.issues || [];
       renderRepositoryMetrics(result);
       renderIssueInbox(currentIssues);
     } catch (error) {
+      // 同样的 race guard: 失败时如果用户已经切到别的 repo, 不要把当前
+      // 视图的 heading / 权限栏 / 摘要用旧的 repository 名覆盖掉.
+      // (之前的实现用闭包 `repository` 写 DOM, 闭包错位 = P0 bug)
+      if (myToken !== loadIssuesToken) return;
+      if (error.name === 'AbortError') return;
       // 失败时必须把 heading / 权限栏 / 摘要一起回滚, 不要让用户
       // 看到「正在读取 X」但 issueInbox 又显示「读不到」的不一致状态.
       issueSummary.innerHTML = '<span><strong>同步失败</strong></span>';
@@ -995,6 +1017,8 @@ APP_JS = r"""
         if (loadIssuesButton) loadIssuesButton.hidden = true;
         if (activeRepoHeading) {
           activeRepoHeading.textContent = '未选择仓库';
+          // 重置回空状态时重新挂上 heading-idle, heading 视觉保持「未选」灰色
+          activeRepoHeading.classList.add('heading-idle');
           activeRepoHeading.classList.remove('heading-failed');
         }
         if (dailySummary) dailySummary.textContent = '点右上角「+ 添加仓库」开始, 不会自动读取任何数据。';
@@ -1022,6 +1046,9 @@ APP_JS = r"""
       document.documentElement.classList.remove('no-repositories');
       if (activeRepoHeading) {
         activeRepoHeading.textContent = '未选择仓库';
+        // 同样: 重置回「未选」要加回 heading-idle class, 不然 heading 视觉会留
+        // 在「已选」时的黑色加粗.
+        activeRepoHeading.classList.add('heading-idle');
         activeRepoHeading.classList.remove('heading-failed');
       }
       if (dailySummary) dailySummary.textContent = repositories.length === 1
@@ -1629,7 +1656,10 @@ APP_JS = r"""
 
   if (loadIssuesButton) {
     loadIssuesButton.addEventListener('click', () => {
-      const target = loadIssuesButton.dataset.repo || currentRepository;
+      // 用 currentRepository 而不是 dataset.repo: 失败回滚后 loadIssuesButton
+      // 切到「重试」状态, 此时用户可能已经切到别的 repo, dataset.repo
+      // 残留会导致点「重试」去拉旧 repo, 用全局 currentRepository 更稳.
+      const target = currentRepository;
       if (target) loadIssues(target, loadIssuesButton.textContent === '重试');
     });
   }
