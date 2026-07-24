@@ -810,6 +810,8 @@ APP_JS = r"""
     const deltas = result.deltas || {};
     currentCanModify = Boolean(result.can_ai_modify);
     currentRepairMode = result.repair_mode || (currentCanModify ? 'owner_pr' : 'fork_pr');
+    // 成功拉过数据后, refresh 按钮才有意义
+    if (refreshIssues) refreshIssues.hidden = false;
     if (repoPermission) {
       repoPermission.hidden = false;
       repoPermission.className = `repo-permission ${currentCanModify ? 'owner' : 'monitor'}`;
@@ -954,6 +956,8 @@ APP_JS = r"""
       window.gheRepositories = repositories;
       // 同时刷新 sidebar 的 pill, 加上 owner / monitor tag, 让用户一眼
       // 区分「我的」vs「外部」, 不需要切到主视图才能看到.
+      // 点击 pill = 主动选这个 repo (主区切到「已配置」+ 自动 loadIssues).
+      // 保留 href 是为了中键 / 右键「在新标签打开 brief」还能用.
       const sidebarList = qs('.repo-list');
       if (sidebarList) {
         if (!repositories.length) {
@@ -965,90 +969,85 @@ APP_JS = r"""
               ? '<span class="repo-tag owner">我的</span>'
               : '<span class="repo-tag monitor">外部</span>';
             const cls = isOwner ? 'repo-pill' : 'repo-pill is-monitor';
-            return `<a class="${cls}" href="/ui/brief/${encodeURIComponent(repository.full_name)}" title="${escapeHtml(repository.full_name)} · ${isOwner ? '我的仓库' : '外部仓库'}"><span class="repo-dot"></span><span class="repo-name">${escapeHtml(repository.full_name)}</span>${tag}</a>`;
+            return `<a class="${cls}" href="/ui/brief/${encodeURIComponent(repository.full_name)}" data-select-repo="${escapeHtml(repository.full_name)}" title="${escapeHtml(repository.full_name)} · ${isOwner ? '我的仓库' : '外部仓库'} (左键选中并监控, 中键打开简报)"><span class="repo-dot"></span><span class="repo-name">${escapeHtml(repository.full_name)}</span>${tag}</a>`;
           }).join('');
         }
       }
       if (ownedRepoCount) ownedRepoCount.textContent = String(repositories.length);
       repoViewer.textContent = result.viewer ? `@${result.viewer}` : '';
-      repoSwitcher.innerHTML = repositories.map((repository) => {
-        const suffix = repository.access === 'monitor'
-          ? ' · 外部 · 可贡献'
-          : (repository.private ? ' · 私有' : '');
-        return `<option value="${escapeHtml(repository.full_name)}">${escapeHtml(repository.full_name)}${suffix}</option>`;
-      }).join('');
-      let remembered = '';
-      try { remembered = window.localStorage.getItem('ghe:selected-repository') || ''; } catch (_) {}
-      const available = new Set(repositories.map((repository) => repository.full_name));
-      const selected = available.has(remembered)
-        ? remembered
-        : (available.has(result.selected) ? result.selected : repositories[0]?.full_name);
-      if (!selected) {
+      // topbar select 只用来**切换**已选 repo, 永远不预选. 第一个 option
+      // 是「— 请选择 —」, 强制用户主动选.
+      repoSwitcher.innerHTML = '<option value="" selected disabled>— 请选择 —</option>'
+        + repositories.map((repository) => {
+            const suffix = repository.access === 'monitor'
+              ? ' · 外部 · 可贡献'
+              : (repository.private ? ' · 私有' : '');
+            return `<option value="${escapeHtml(repository.full_name)}">${escapeHtml(repository.full_name)}${suffix}</option>`;
+          }).join('');
+      if (!repositories.length) {
+        // 没配置任何 repo: 主区空状态, 引导添加
         currentRepository = '';
-        repoSwitcher.innerHTML = '<option>还没有添加仓库</option>';
+        repoSwitcher.innerHTML = '<option value="" selected disabled>还没有添加仓库</option>';
         repoSwitcher.disabled = true;
         if (root) root.classList.add('no-repositories');
         if (repositoryOnboarding) repositoryOnboarding.hidden = false;
         document.documentElement.classList.add('no-repositories');
         if (loadIssuesButton) loadIssuesButton.hidden = true;
         if (activeRepoHeading) {
-          activeRepoHeading.textContent = '还没有添加仓库';
+          activeRepoHeading.textContent = '未选择仓库';
           activeRepoHeading.classList.remove('heading-failed');
         }
-        if (dailySummary) dailySummary.textContent = '点击右上角「+ 添加仓库」开始, 不会自动读取任何数据。';
+        if (dailySummary) dailySummary.textContent = '点右上角「+ 添加仓库」开始, 不会自动读取任何数据。';
         if (repoPermission) {
           repoPermission.hidden = true;
           repoPermission.textContent = '';
         }
         if (issueSummary) issueSummary.innerHTML = '<span><strong>—</strong> 个待处理</span>';
-        if (issueInbox) issueInbox.innerHTML = '<div class="issue-empty"><strong>这里会列出你追踪仓库的 Issue</strong><span>添加仓库后, 再点「开始监控」。</span></div>';
+        if (issueInbox) issueInbox.innerHTML = '<div class="issue-empty"><strong>未选择仓库</strong><span>添加一个仓库后再开始监控。</span></div>';
         return;
       }
+      // 有 repo 但 init 阶段**不预选任何** (不读 localStorage remembered,
+      // 不 fallback 到 repositories[0], 也不信后端的 result.selected).
+      // 跟「用户没主动选 = 没用」的原则一致, 避免刚启动就被某个 repo
+      // 占据 heading / 触发 fetch. 用户从 sidebar 或 topbar 主动点才算
+      // 选中.
+      currentRepository = '';
       repoSwitcher.disabled = false;
-      if (root) root.classList.remove('no-repositories');
+      repoSwitcher.value = '';
+      if (root) {
+        root.classList.remove('no-repositories');
+        root.dataset.repo = '';
+      }
       if (repositoryOnboarding) repositoryOnboarding.hidden = true;
       document.documentElement.classList.remove('no-repositories');
-      repoSwitcher.value = selected;
-      currentRepository = selected;
-      if (root) root.dataset.repo = selected;
-      // 关键改动: 加载仓库列表 ≠ 拉 Issue 数据.
-      // 之前会在 init 阶段自动 loadIssues, 失败时 heading 卡在「正在读取 X」,
-      // 用户体验上像是「app 出了 bug」. 现在改成「准备好了, 但还没拉数据」,
-      // 给一个明显的「开始监控」按钮, 用户主动点击才发请求.
-      const matchedRepo = repositories.find((repository) => repository.full_name === selected);
-      currentCanModify = matchedRepo?.access === 'owner';
       if (activeRepoHeading) {
-        activeRepoHeading.textContent = selected;
+        activeRepoHeading.textContent = '未选择仓库';
         activeRepoHeading.classList.remove('heading-failed');
       }
-      if (dailySummary) dailySummary.textContent = '已配置但还没拉取数据, 点击下方按钮开始监控。';
+      if (dailySummary) dailySummary.textContent = repositories.length === 1
+        ? `已加载 1 个追踪仓库, 左侧点一下开始。`
+        : `已加载 ${repositories.length} 个追踪仓库, 左侧或上方选一个开始。`;
       if (repoPermission) {
-        repoPermission.hidden = false;
-        repoPermission.className = `repo-permission ${currentCanModify ? 'owner' : 'monitor'}`;
-        repoPermission.textContent = currentCanModify
-          ? 'Owner · 未监控, 不会自动拉取数据'
-          : '外部仓库 · 未监控, 通过你的 Fork 贡献 PR';
+        repoPermission.hidden = true;
+        repoPermission.textContent = '';
       }
-      if (repoAccessDot) repoAccessDot.className = `repo-access-dot ${currentCanModify ? 'owner' : 'monitor'}`;
-      if (loadIssuesButton) {
-        loadIssuesButton.hidden = false;
-        loadIssuesButton.disabled = false;
-        loadIssuesButton.textContent = '开始监控这个仓库';
-        loadIssuesButton.dataset.repo = selected;
-      }
+      if (loadIssuesButton) loadIssuesButton.hidden = true;
       if (issueSummary) issueSummary.innerHTML = '<span><strong>—</strong> 个待处理</span>';
-      if (issueInbox) issueInbox.innerHTML = '<div class="issue-empty"><strong>还没拉取 Issue</strong><span>点上方「开始监控这个仓库」按钮, 或切换到其他仓库。</span></div>';
+      if (issueInbox) issueInbox.innerHTML = '<div class="issue-empty"><strong>未选择仓库</strong><span>点 sidebar 的 repo (或上方下拉) 选中后, 会自动拉取 Issue。</span></div>';
     } catch (error) {
-      repoSwitcher.innerHTML = '<option>无法读取仓库</option>';
+      repoSwitcher.innerHTML = '<option value="" selected disabled>无法读取仓库</option>';
       repoSwitcher.disabled = true;
-      issueSummary.innerHTML = '<span><strong>需要连接 GitHub</strong></span>';
+      issueSummary.innerHTML = '<span><strong>—</strong> 个待处理</span>';
       issueInbox.innerHTML = `<div class="issue-error"><strong>仓库列表读取失败</strong><span>${escapeHtml(error.message || '请运行 gh auth login')}</span></div>`;
       if (loadIssuesButton) loadIssuesButton.hidden = true;
+      if (refreshIssues) refreshIssues.hidden = true;
+      currentRepository = '';
+      if (root) root.dataset.repo = '';
       if (activeRepoHeading) {
         activeRepoHeading.textContent = '仓库列表读取失败';
         activeRepoHeading.classList.add('heading-failed');
       }
-      if (dailySummary) dailySummary.textContent = '检查 GitHub token 或网络连接后再试。';
+      if (dailySummary) dailySummary.textContent = '检查 GitHub token 或网络连接后再试, 没选 repo 之前不会自动重试。';
     }
   };
 
@@ -1595,39 +1594,30 @@ APP_JS = r"""
   if (repoSwitcher) {
     repoSwitcher.addEventListener('change', () => {
       const repository = repoSwitcher.value;
+      if (!repository) return;  // 用户选了 "— 请选择 —" 不动
       try { window.localStorage.setItem('ghe:selected-repository', repository); } catch (_) {}
-      // 切换仓库同样不自动 fetch: 只更新 heading / 权限提示,
-      // 用户点「开始监控」按钮才发请求.
-      currentRepository = repository;
-      if (root) root.dataset.repo = repository;
-      const matchedRepo = (window.gheRepositories || []).find((entry) => entry.full_name === repository);
-      currentCanModify = matchedRepo?.access === 'owner';
-      if (activeRepoHeading) {
-        activeRepoHeading.textContent = repository;
-        activeRepoHeading.classList.remove('heading-failed');
-      }
-      if (dailySummary) dailySummary.textContent = '已切换, 还没拉取数据。';
-      if (repoPermission) {
-        repoPermission.hidden = false;
-        repoPermission.className = `repo-permission ${currentCanModify ? 'owner' : 'monitor'}`;
-        repoPermission.textContent = currentCanModify
-          ? 'Owner · 未监控, 不会自动拉取数据'
-          : '外部仓库 · 未监控, 通过你的 Fork 贡献 PR';
-      }
-      if (repoAccessDot) repoAccessDot.className = `repo-access-dot ${currentCanModify ? 'owner' : 'monitor'}`;
-      if (loadIssuesButton) {
-        loadIssuesButton.hidden = false;
-        loadIssuesButton.disabled = false;
-        loadIssuesButton.textContent = '开始监控这个仓库';
-        loadIssuesButton.dataset.repo = repository;
-      }
-      if (issueSummary) issueSummary.innerHTML = '<span><strong>—</strong> 个待处理</span>';
-      if (issueInbox) issueInbox.innerHTML = '<div class="issue-empty"><strong>还没拉取 Issue</strong><span>点上方「开始监控这个仓库」按钮, 或再换一个仓库。</span></div>';
+      // topbar 下拉 = 用户明确选了 repo, 视为「开始用这个」, 立刻 loadIssues.
+      loadIssues(repository);
     });
     loadRepairCapabilities();
     loadRepositories();
     loadRepairJobs();
   }
+
+  // sidebar pill 左键 = 选中 + loadIssues (主区切换).
+  // 中键 / 右键「在新标签打开」保留默认行为 (跳 /ui/brief/{repo}).
+  document.addEventListener('click', (event) => {
+    const pill = event.target.closest('[data-select-repo]');
+    if (!pill) return;
+    if (event.button !== 0) return;        // 中键右键放行
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;  // 修饰键放行
+    event.preventDefault();
+    const repository = pill.dataset.selectRepo;
+    if (!repository) return;
+    try { window.localStorage.setItem('ghe:selected-repository', repository); } catch (_) {}
+    if (repoSwitcher) repoSwitcher.value = repository;  // 同步 topbar
+    loadIssues(repository);
+  });
   document.documentElement.dataset.gheUi = 'ready';
 
   if (refreshIssues) {

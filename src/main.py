@@ -822,6 +822,10 @@ def serve(args: argparse.Namespace) -> int:
 
     config = load_config_lenient(args.config)
     repos = get_target_repos(config, args.repo)
+    # dev 模式: 用 mock 替换 config 里的 repo 列表, 让 SSR 阶段就能看到
+    # 完整 owner + monitor 场景的 sidebar pill, 不需要真打 GitHub.
+    if os.getenv("GHE_MOCK_REPOSITORIES") == "1":
+        repos = ["frankfika/GitHubEngineer", "OpenCSG-Strategy/GitHubEngineer"]
     github_token = GitHubClient.resolve_token(
         config.get("github", {}).get("token") or os.getenv("GITHUB_TOKEN")
     )
@@ -1771,30 +1775,21 @@ footer {{ max-width: 960px; margin: 64px auto 32px; padding: 0 24px;
                 )
         memory = DecisionMemory.load(args.memory_path)
         latest = briefs[0]["href"] if briefs else ""
-        has_repo = bool(repos)
-        current_repo = repos[0] if has_repo else ""
-        # 避免在服务端假设用户会立刻使用 repos[0]。heading / 权限栏都按
-        # 是否有追踪仓库来切换, 没选的时候给空状态, 前端 fetch 失败也不会
-        # 卡在「正在读取 OpenCSG-Strategy/...」这种骗用户的状态里。
-        if has_repo:
-            heading_html = (
-                f"<h1 id='active-repo-heading' class='heading-idle'>"
-                f"已配置 {html.escape(current_repo)}</h1>"
-                "<p id='daily-summary'>点击「开始监控」拉取 Issue 列表, "
-                "或先切换到其他仓库。</p>"
-            )
-            permission_html = (
-                "<div class='repo-permission' id='repo-permission'>"
-                "尚未开始监控, 不会自动拉取 GitHub 数据</div>"
-            )
-        else:
-            heading_html = (
-                "<h1 id='active-repo-heading' class='heading-idle'>还没有添加仓库</h1>"
-                "<p id='daily-summary'>添加一个仓库之后, 再决定要不要开始监控。</p>"
-            )
-            permission_html = (
-                "<div class='repo-permission' id='repo-permission' hidden></div>"
-            )
+        # 服务端**永远不**预设 current_repo. 用户的「当前仓库」是会话级
+        # 状态, 必须在客户端由用户主动选择 (点 sidebar pill / 切 topbar
+        # select / 主动添加) 才会进入, 不然会把 config 里 hardcode 的
+        # repos[0] 当成「默认就用这个」, 失败时 heading 还会卡在「正在
+        # 读取 X」骗用户.
+        current_repo = ""
+        # SSR 阶段: 主区 heading 固定是「未选择仓库」, 引导用户去 sidebar
+        # 点一个 repo. 完全没有「正在读取 / 已配置」这种暗示.
+        heading_html = (
+            "<h1 id='active-repo-heading' class='heading-idle'>未选择仓库</h1>"
+            "<p id='daily-summary'>从左侧选一个, 或点右上角「+ 添加仓库」开始。</p>"
+        )
+        permission_html = (
+            "<div class='repo-permission' id='repo-permission' hidden></div>"
+        )
         return (
             "<div class='conversation today-view' id='assistant-root'"
             f" data-latest-brief='{html.escape(latest, quote=True)}'"
@@ -1815,7 +1810,7 @@ footer {{ max-width: 960px; margin: 64px auto 32px; padding: 0 24px;
             "data-action='load-issues' hidden>开始监控这个仓库</button>"
             "</div></div>"
             "<button class='icon-button refresh-button' type='button' id='refresh-issues' "
-            "aria-label='刷新 Issue' title='刷新'>↻</button>"
+            "aria-label='刷新 Issue' title='刷新' hidden>↻</button>"
             "</header>"
             f"{permission_html}"
             "<div class='metric-grid' id='repo-metrics'>"
