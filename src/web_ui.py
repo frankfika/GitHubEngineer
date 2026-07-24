@@ -846,6 +846,10 @@ APP_JS = r"""
       activeRepoHeading.textContent = todayCount
         ? `今天有 ${todayCount} 个 Issue 发生变化`
         : '今天没有新的 Issue 变化';
+      // 成功路径也要 remove heading-failed: 万一这次是重试 / 切 repo 后
+      // 第一次成功, heading 文本被覆盖成「今天有 N 个」, 颜色若还停在
+      // warning 就误导用户当前还在失败.
+      activeRepoHeading.classList.remove('heading-failed');
     }
     if (dailySummary) {
       dailySummary.textContent = issues.length
@@ -916,14 +920,19 @@ APP_JS = r"""
       activeRepoHeading.textContent = `正在读取 ${repository}`;
       // heading-idle 是 SSR 给的「未选择仓库」灰色, 选了 repo 之后必须清掉,
       // 不然 heading 永远 var(--text-2) 灰字重 500, 跟「正在读取」状态不符.
+      // heading-failed 是上一次失败残留, 这次重试 / 切 repo 也要清掉,
+      // 不然 heading 染 warning 色误导用户当前还在失败.
       activeRepoHeading.classList.remove('heading-idle');
       activeRepoHeading.classList.remove('heading-failed');
     }
     if (dailySummary) dailySummary.textContent = '正在同步仓库动态…';
-    const sidebarRepoName = qs('.repo-name');
-    const sidebarRepoLink = qs('.repo-pill');
-    if (sidebarRepoName) sidebarRepoName.textContent = repository;
-    if (sidebarRepoLink) sidebarRepoLink.href = `/ui/brief/${repository}`;
+    // sidebar pill 的 active class 切换: 找出当前 selected 的 pill,
+    // 之前 selected 的去掉. 之前用 qs('.repo-name') 是错的 — qs 取首
+    // 匹配, 切到第二个 pill 时会改第一个 pill 的 repo 名 + href, tag 不动,
+    // 出现 "name=B tag=owner" 错位.
+    qsa('.repo-pill').forEach((pill) => {
+      pill.classList.toggle('active', pill.dataset.selectRepo === repository);
+    });
     if (loadIssuesButton) {
       loadIssuesButton.hidden = true;
       loadIssuesButton.disabled = true;
@@ -1059,8 +1068,15 @@ APP_JS = r"""
         repoPermission.textContent = '';
       }
       if (loadIssuesButton) loadIssuesButton.hidden = true;
+      // 重置回「未选择仓库」时, refresh 按钮也得 hidden — 不然处于
+      // 「可见但 currentRepository 为空」状态, 点下去只会弹 toast,
+      // 撞出「看着能点, 点了只弹 toast」的废按钮.
+      if (refreshIssues) refreshIssues.hidden = true;
       if (issueSummary) issueSummary.innerHTML = '<span><strong>—</strong> 个待处理</span>';
       if (issueInbox) issueInbox.innerHTML = '<div class="issue-empty"><strong>未选择仓库</strong><span>点 sidebar 的 repo (或上方下拉) 选中后, 会自动拉取 Issue。</span></div>';
+      // 重置时也清掉所有 pill 的 active class, 避免上一次的「selected」
+      // 视觉残留. 用户没选 = 全不 active.
+      qsa('.repo-pill').forEach((pill) => pill.classList.remove('active'));
     } catch (error) {
       repoSwitcher.innerHTML = '<option value="" selected disabled>无法读取仓库</option>';
       repoSwitcher.disabled = true;
