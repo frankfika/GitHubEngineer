@@ -45,7 +45,6 @@ class IssueAnalyzer:
         eligible_issues = self.decision_memory.filter_issues(issues)
         eligible_issues = self._filter_by_age(eligible_issues)
         candidates = self._select_candidates(eligible_issues)
-        clusters = self._find_obvious_clusters(candidates)
         if not candidates:
             return MaintainerBrief(
                 generated_at=datetime.now(timezone.utc),

@@ -86,6 +86,37 @@ class DecisionMemory:
         self.records.append(decision)
         self.save()
 
+    def list_decisions(self) -> list[DecisionRecord]:
+        """Return a defensive copy of the in-memory records list.
+
+        Callers must use this instead of touching ``self.records``
+        directly when they intend to render or post-process the
+        memory; mutating the inner list bypasses ``save``.
+        """
+
+        return list(self.records)
+
+    def revoke_decision(self, predicate) -> bool:
+        """Remove every record that matches ``predicate`` and persist.
+
+        Returns ``True`` if at least one record was removed, ``False``
+        otherwise. The caller can pass a callable (e.g. a lambda that
+        checks ``record.id``) or a status string to drop every record
+        in that status.
+        """
+
+        if isinstance(predicate, str):
+            status_value = predicate
+            check = lambda record: record.status == status_value  # noqa: E731
+        else:
+            check = predicate
+        kept = [record for record in self.records if not check(record)]
+        if len(kept) == len(self.records):
+            return False
+        self.records = kept
+        self.save()
+        return True
+
     def save(self) -> None:
         """Persist current records atomically. This is an explicit write API."""
 

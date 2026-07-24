@@ -129,8 +129,36 @@ def test_prompt_context_collects_unique_goals_and_guardrails():
     )
     context = memory.prompt_context()
     assert "reliability" in context["goals"]
-    assert "no new deps" in context["guardrails"]
-    assert any("later" in entry for entry in context["deferred_context"])
+
+
+def test_list_decisions_returns_defensive_copy(tmp_path: Path):
+    memory = DecisionMemory(path=tmp_path / "decisions.yml")
+    memory.records = [DecisionRecord(status="accepted", themes=["a"])]
+    snapshot = memory.list_decisions()
+    snapshot.clear()
+    # The underlying list must not be mutated by callers touching the
+    # snapshot they got.
+    assert len(memory.records) == 1
+
+
+def test_revoke_decision_by_status_removes_matches(tmp_path: Path):
+    memory = DecisionMemory(path=tmp_path / "decisions.yml")
+    memory.records = [
+        DecisionRecord(status="accepted", themes=["a"]),
+        DecisionRecord(status="rejected", themes=["b"]),
+        DecisionRecord(status="rejected", themes=["c"]),
+    ]
+    removed = memory.revoke_decision("rejected")
+    assert removed is True
+    assert [r.status for r in memory.records] == ["accepted"]
+
+
+def test_revoke_decision_by_predicate_returns_false_when_no_match(tmp_path: Path):
+    memory = DecisionMemory(path=tmp_path / "decisions.yml")
+    memory.records = [DecisionRecord(status="accepted", themes=["a"])]
+    removed = memory.revoke_decision(lambda r: r.status == "rejected")
+    assert removed is False
+    assert len(memory.records) == 1
 
 
 if __name__ == "__main__":

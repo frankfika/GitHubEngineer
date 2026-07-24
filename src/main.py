@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -300,11 +301,32 @@ _ERROR_HINTS: tuple[tuple[str, str], ...] = (
     ("--generic-executable is required", "Pass --generic-executable /absolute/path/to/agent-cli when --adapter generic-cli is used."),
 )
 
+#: Pattern that matches a token-like string anywhere in user-visible
+#: output. Used by ``_scrub_token`` to make sure a third-party SDK
+#: exception that echoes part of an Authorization header never reaches
+#: the developer's terminal or the HTTP error body.
+_TOKEN_PATTERNS = (
+    re.compile(r"(?i)(?:github|gh|openai|llm|anthropic|api[_-]?key)\s*=\s*\S+"),
+    re.compile(r"(?i)bearer\s+[A-Za-z0-9._\-]+"),
+    re.compile(r"sk-[A-Za-z0-9_\-]{20,}"),
+    re.compile(r"ghp_[A-Za-z0-9]{20,}"),
+)
+
+
+def _scrub_token(message: str) -> str:
+    """Return ``message`` with any token-shaped substring redacted."""
+
+    cleaned = message
+    for pattern in _TOKEN_PATTERNS:
+        cleaned = pattern.sub("[REDACTED]", cleaned)
+    return cleaned
+
 
 def format_error(exc: BaseException) -> str:
     """Render an exception as a one-line, actionable error message."""
 
     message = str(exc).strip() or exc.__class__.__name__
+    message = _scrub_token(message)
     for needle, hint in _ERROR_HINTS:
         if needle in message:
             return f"Error: {message}\nHint: {hint}"
@@ -350,7 +372,7 @@ def _process_single_repo(
     gh_client = GitHubClient(github_token, repo_full_name)
     raw_issues = gh_client.get_open_issues(
         since=since,
-        max_issues=max(100, max_issues),
+        max_issues=min(max_issues, 100),
         max_pages=10,
     )
     issues = [IssueMetrics(**gh_client.get_issue_metrics(issue)) for issue in raw_issues]
@@ -436,7 +458,7 @@ def _reload_last_brief(
     gh_client = GitHubClient(github_token, repo_full_name)
     raw_issues = gh_client.get_open_issues(
         since=since,
-        max_issues=max(100, max_issues),
+        max_issues=min(max_issues, 100),
         max_pages=10,
     )
     issues = [IssueMetrics(**gh_client.get_issue_metrics(issue)) for issue in raw_issues]
@@ -672,7 +694,15 @@ def prepare_task(
     directory = Path(args.task_output_dir)
     directory.mkdir(parents=True, exist_ok=True)
     safe_repo_name = repo_full_name.replace("/", "_")
-    output_file = directory / f"{safe_repo_name}_issue_{args.prepare_issue}.md"
+    # Match the web UI's task-file naming so a single issue never
+    # leaves two different files behind (CLI used to write
+    # ``<repo>_issue_<N>.md`` and overwrite a previous run; the web UI
+    # added a timestamp suffix). Both paths now agree.
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    output_file = (
+        directory
+        / f"{safe_repo_name}_issue_{args.prepare_issue}_{timestamp}.md"
+    )
     output_file.write_text(task, encoding="utf-8")
     return output_file
 
@@ -1892,7 +1922,6 @@ footer {{ max-width: 960px; margin: 64px auto 32px; padding: 0 24px;
         return 200, body, "text/plain; charset=utf-8"
 
     def handle_post_decision(query: dict[str, list[str]]) -> tuple[int, bytes, str]:
-        from datetime import datetime, timezone
         from .models import DecisionRecord
 
         status = (query.get("status", [""])[0] or "").strip()

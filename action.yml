@@ -34,6 +34,9 @@ runs:
   using: "composite"
   steps:
     - name: Set up Python
+      # NOTE: setup-python / upload-artifact versions are tracked by Dependabot
+      # (see .github/dependabot.yml). When Dependabot opens a version-bump PR,
+      # merge it and the action picks up the new SHA automatically.
       uses: actions/setup-python@v5
       with:
         python-version: "3.11"

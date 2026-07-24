@@ -381,5 +381,33 @@ class SanitizeUntrustedFieldTest(unittest.TestCase):
         self.assertEqual(cleaned, "Verify the cached repo is invalidated after each POST.")
 
 
+class ScrubTokenTest(unittest.TestCase):
+    """Round 6 P1: error messages rendered to the terminal or HTTP
+    response body must not echo API tokens.  A naive ``str(exc)`` on a
+    PyGithub / OpenAI SDK exception can include a fragment of the
+    Authorization header.
+    """
+
+    def test_openai_key_is_redacted(self):
+        from src.main import _scrub_token
+
+        cleaned = _scrub_token("LLM request failed: api_key=sk-1234567890abcdefghij")
+        self.assertIn("[REDACTED]", cleaned)
+        self.assertNotIn("sk-1234567890", cleaned)
+
+    def test_github_pat_is_redacted(self):
+        from src.main import _scrub_token
+
+        cleaned = _scrub_token("authorization: ghp_abcdef0123456789abcdef0123456789")
+        self.assertIn("[REDACTED]", cleaned)
+        self.assertNotIn("ghp_abcdef0123456789abcdef0123456789", cleaned)
+
+    def test_clean_message_passes_through(self):
+        from src.main import _scrub_token
+
+        cleaned = _scrub_token("Output directory /tmp does not exist.")
+        self.assertEqual(cleaned, "Output directory /tmp does not exist.")
+
+
 if __name__ == "__main__":
     unittest.main()
