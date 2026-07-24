@@ -1006,6 +1006,42 @@ def serve(args: argparse.Namespace) -> int:
         cached = repo_cache.get("payload")
         if cached is not None and now - float(repo_cache["loaded_at"]) < 300:
             return 200, json.dumps(cached, ensure_ascii=False).encode("utf-8"), "application/json"
+        # 开发/调试用 mock: GHE_MOCK_REPOSITORIES=1 时, 不真打 GitHub, 返 2 个假 repo
+        # (一个 owner 一个 monitor). 让前端能验证 owner/monitor badge 渲染.
+        if os.getenv("GHE_MOCK_REPOSITORIES") == "1":
+            mock_payload = {
+                "viewer": "frankfika",
+                "selected": "frankfika/GitHubEngineer",
+                "repositories": [
+                    {
+                        "full_name": "frankfika/GitHubEngineer",
+                        "owner": "frankfika",
+                        "name": "GitHubEngineer",
+                        "stars": 12,
+                        "forks": 3,
+                        "followers": 5,
+                        "description": "Frank 的 fork",
+                        "private": False,
+                        "configured": True,
+                        "access": "owner",
+                    },
+                    {
+                        "full_name": "OpenCSG-Strategy/GitHubEngineer",
+                        "owner": "OpenCSG-Strategy",
+                        "name": "GitHubEngineer",
+                        "stars": 89,
+                        "forks": 21,
+                        "followers": 17,
+                        "description": "Upstream",
+                        "private": False,
+                        "configured": True,
+                        "access": "monitor",
+                    },
+                ],
+                "refreshed_at": datetime.now(timezone.utc).isoformat(),
+            }
+            repo_cache.update({"loaded_at": now, "payload": mock_payload})
+            return 200, json.dumps(mock_payload, ensure_ascii=False).encode("utf-8"), "application/json"
         try:
             login = GitHubClient.get_authenticated_login(github_token)
         except GitHubClientError as exc:
@@ -1735,7 +1771,30 @@ footer {{ max-width: 960px; margin: 64px auto 32px; padding: 0 24px;
                 )
         memory = DecisionMemory.load(args.memory_path)
         latest = briefs[0]["href"] if briefs else ""
-        current_repo = repos[0] if repos else "尚未配置仓库"
+        has_repo = bool(repos)
+        current_repo = repos[0] if has_repo else ""
+        # 避免在服务端假设用户会立刻使用 repos[0]。heading / 权限栏都按
+        # 是否有追踪仓库来切换, 没选的时候给空状态, 前端 fetch 失败也不会
+        # 卡在「正在读取 OpenCSG-Strategy/...」这种骗用户的状态里。
+        if has_repo:
+            heading_html = (
+                f"<h1 id='active-repo-heading' class='heading-idle'>"
+                f"已配置 {html.escape(current_repo)}</h1>"
+                "<p id='daily-summary'>点击「开始监控」拉取 Issue 列表, "
+                "或先切换到其他仓库。</p>"
+            )
+            permission_html = (
+                "<div class='repo-permission' id='repo-permission'>"
+                "尚未开始监控, 不会自动拉取 GitHub 数据</div>"
+            )
+        else:
+            heading_html = (
+                "<h1 id='active-repo-heading' class='heading-idle'>还没有添加仓库</h1>"
+                "<p id='daily-summary'>添加一个仓库之后, 再决定要不要开始监控。</p>"
+            )
+            permission_html = (
+                "<div class='repo-permission' id='repo-permission' hidden></div>"
+            )
         return (
             "<div class='conversation today-view' id='assistant-root'"
             f" data-latest-brief='{html.escape(latest, quote=True)}'"
@@ -1743,18 +1802,22 @@ footer {{ max-width: 960px; margin: 64px auto 32px; padding: 0 24px;
             f" data-brief-count='{len(briefs)}' data-decision-count='{len(memory.records)}'>"
             "<section class='repository-onboarding' id='repository-onboarding' hidden>"
             "<div class='onboarding-icon'>＋</div><h1>先添加一个仓库</h1>"
-            "<p>只会加载你主动加入清单的仓库，不会默认读取账号下的全部仓库。</p>"
+            "<p>只会加载你主动加入清单的仓库, 不会默认读取账号下的全部仓库。</p>"
             "<div class='onboarding-actions'>"
             "<button class='primary-button' type='button' data-open-monitor>粘贴仓库地址</button>"
             "<button class='soft-button' type='button' data-open-owned>从我的仓库选择</button>"
             "</div></section>"
             "<header class='today-header'>"
             "<div class='today-copy'><div class='today-kicker'>今天</div>"
-            f"<h1 id='active-repo-heading'>正在读取 {html.escape(current_repo)}</h1>"
-            "<p id='daily-summary'>正在同步仓库动态…</p></div>"
-            "<button class='icon-button refresh-button' type='button' id='refresh-issues' aria-label='刷新 Issue' title='刷新'>↻</button>"
+            f"{heading_html}"
+            "<div class='repo-load-row'>"
+            "<button class='primary-button' type='button' id='load-issues-button' "
+            "data-action='load-issues' hidden>开始监控这个仓库</button>"
+            "</div></div>"
+            "<button class='icon-button refresh-button' type='button' id='refresh-issues' "
+            "aria-label='刷新 Issue' title='刷新'>↻</button>"
             "</header>"
-            "<div class='repo-permission' id='repo-permission'>正在确认权限…</div>"
+            f"{permission_html}"
             "<div class='metric-grid' id='repo-metrics'>"
             "<div class='repo-metric'><span>Stars</span><strong>—</strong><small>—</small></div>"
             "<div class='repo-metric'><span>Forks</span><strong>—</strong><small>—</small></div>"

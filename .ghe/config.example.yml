@@ -1,14 +1,14 @@
 repo:
-  owner: "your-org"
-  name: "your-repo"
-  # full_name: "your-org/your-repo"
+  owner: "REPLACE_ME"
+  name: "REPLACE_ME"
+  # full_name: "REPLACE_ME/REPLACE_ME"
 
 # Optional v1.0 multi-repo form.  When this list is non-empty the CLI writes
 # one brief per entry.  A comma-separated ``--repo owner/a,b/c`` overrides it
 # for a single invocation.
 # repos:
-#   - "your-org/your-repo"
-#   - "your-org/your-other-repo"
+#   - "REPLACE_ME/REPLACE_ME"
+#   - "REPLACE_ME/REPLACE_ME"
 
 github:
   # Optional for public repositories; recommended to avoid GitHub API limits.

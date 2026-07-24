@@ -34,6 +34,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   / `test` / `test-fast` / `lint` / `smoke` / `clean` targets. `README.md`
   adds a cost estimate and a multi-repo config example. `examples/sample_report.md`
   is now a real-shape brief, not a placeholder.
+- **Idle-by-default repo fetching.** The assistant page no longer auto-fetches
+  issues at startup. The heading and permission banner now read
+  "已配置 X · 未监控" until the user explicitly clicks "开始监控这个仓库".
+  Empty / failed loadIssues rolls the heading back to a clear
+  "X · 读取失败" / "还没有添加仓库" state instead of leaving "正在读取 X" on
+  screen forever. Sidebar pills show green "我的" / amber "外部" tags so
+  maintainers can tell at a glance which repos accept AI-modified PRs and
+  which only get fork-based contributions.
+- **Dev-only mock route.** `GHE_MOCK_REPOSITORIES=1` short-circuits
+  /api/repositories with a fixed owner + monitor pair (no GitHub token
+  required). Useful for UI development, screenshots, and the
+  failure-recovery flow.
 
 ### Changed
 
