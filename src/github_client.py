@@ -6,6 +6,8 @@ from typing import Any
 
 from github import Github, GithubException, RateLimitExceededException
 
+from .process_runtime import safe_subprocess_env
+
 
 class GitHubClientError(RuntimeError):
     """Raised when GitHub API access fails."""
@@ -40,6 +42,7 @@ class GitHubClient:
                 capture_output=True,
                 text=True,
                 timeout=5,
+                env=safe_subprocess_env("gh"),
             )
         except (OSError, subprocess.SubprocessError):
             return None

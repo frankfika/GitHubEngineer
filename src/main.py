@@ -970,6 +970,7 @@ def serve(args: argparse.Namespace) -> int:
                     text=True,
                     timeout=10,
                     shell=False,
+                    env=safe_subprocess_env("worker"),
                 )
                 details = json.loads(auth.stdout) if auth.returncode == 0 else {}
                 claude_authenticated = bool(details.get("loggedIn"))

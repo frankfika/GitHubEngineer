@@ -61,6 +61,12 @@ def safe_subprocess_env(purpose: str) -> dict[str, str]:
     the variable.  Coding agents have run for years without any of
     these variables set; the narrowest environment that still works
     is the safest.
+
+    The keep rules use **explicit name lists** rather than substring
+    matches like ``"API_KEY" in name``.  A substring match would let
+    a custom ``GHE_OPENAI_API_KEY`` leak through, defeating the
+    deny-list check.  Adding a new well-known key means adding it
+    to ``_KNOWN_MODEL_KEYS`` or ``_KNOWN_GH_TOKENS`` here.
     """
 
     allowed_always = {
@@ -77,6 +83,8 @@ def safe_subprocess_env(purpose: str) -> dict[str, str]:
         "XDG_CACHE_HOME",
         "XDG_DATA_HOME",
     }
+    _KNOWN_GH_TOKENS = {"GITHUB_TOKEN", "GH_TOKEN"}
+    _KNOWN_MODEL_KEYS = {"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "LLM_API_KEY"}
     purpose_normalized = purpose.lower().strip()
     keep_tokens = purpose_normalized == "gh"
     keep_model_key = purpose_normalized == "worker"
@@ -87,13 +95,10 @@ def safe_subprocess_env(purpose: str) -> dict[str, str]:
         if upper in allowed_always:
             safe[key] = value
             continue
-        if keep_tokens and upper in {"GITHUB_TOKEN", "GH_TOKEN"}:
+        if keep_tokens and upper in _KNOWN_GH_TOKENS:
             safe[key] = value
             continue
-        if keep_model_key and (
-            "API_KEY" in upper
-            or upper in {"ANTHROPIC_API_KEY", "OPENAI_API_KEY"}
-        ):
+        if keep_model_key and upper in _KNOWN_MODEL_KEYS:
             safe[key] = value
             continue
         if lower in _SENSITIVE_KEYS:

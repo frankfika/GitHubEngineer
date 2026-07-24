@@ -409,5 +409,41 @@ class ScrubTokenTest(unittest.TestCase):
         self.assertEqual(cleaned, "Output directory /tmp does not exist.")
 
 
+class SafeSubprocessEnvDenyListTest(unittest.TestCase):
+    """Round 6 P0 follow-up: even the ``worker`` policy must never let
+    a deny-listed variable leak.  ``GHE_OPENAI_API_KEY`` matches both
+    the "API_KEY substring" keep rule and the deny list — the deny
+    list wins, always.
+    """
+
+    def test_deny_listed_names_never_leak_in_worker_mode(self):
+        with patch.dict(
+            os.environ,
+            {
+                "PATH": "/usr/bin",
+                "GHE_OPENAI_API_KEY": "leak-openai",
+                "GHE_ANTHROPIC_API_KEY": "leak-anthropic",
+                "GHE_LLM_API_KEY": "leak-llm",
+                "ANTHROPIC_API_KEY": "sk-ant-keep",
+            },
+            clear=False,
+        ):
+            env = safe_subprocess_env("worker")
+            self.assertNotIn("GHE_OPENAI_API_KEY", env)
+            self.assertNotIn("GHE_ANTHROPIC_API_KEY", env)
+            self.assertNotIn("GHE_LLM_API_KEY", env)
+            # The non-deny-listed ANTHROPIC_API_KEY still passes.
+            self.assertEqual(env.get("ANTHROPIC_API_KEY"), "sk-ant-keep")
+
+    def test_github_token_never_leaks_in_worker_mode(self):
+        with patch.dict(
+            os.environ,
+            {"PATH": "/usr/bin", "GHE_GITHUB_TOKEN": "leak-gh", "ANTHROPIC_API_KEY": "keep"},
+            clear=False,
+        ):
+            env = safe_subprocess_env("worker")
+            self.assertNotIn("GHE_GITHUB_TOKEN", env)
+
+
 if __name__ == "__main__":
     unittest.main()

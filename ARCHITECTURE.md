@@ -145,9 +145,11 @@ so a single unfiltered string becomes an injection vector.
 the moment it can see `GITHUB_TOKEN` or `LLM_API_KEY` it can push
 or invoke the model as the user.
 
-**Guard:** every `subprocess.Popen` and `subprocess.run` site builds
-its environment from `safe_subprocess_env(purpose)` instead of
-inheriting the parent's `os.environ`. The three policies:
+**Guard:** every `subprocess.Popen` and `subprocess.run` site that
+handles a request path (delegation, repair worker, repair capability
+probe, GitHub token probe) builds its environment from
+`safe_subprocess_env(purpose)` instead of inheriting the parent's
+`os.environ`. The three policies:
 
 | Purpose     | Strips everything except           | Keeps tokens |
 |-------------|-------------------------------------|--------------|
@@ -155,8 +157,12 @@ inheriting the parent's `os.environ`. The three policies:
 | `gh`        | `delegate` + …                     | `GITHUB_TOKEN` |
 | `worker`    | `delegate` + …                     | model API key |
 
-The default (no `env=`) is no longer a permitted call shape in this
-codebase.
+The deny list (`_SENSITIVE_KEYS`) is checked **before** the keep
+rules, so a custom variable like `GHE_OPENAI_API_KEY` cannot leak
+through the "any key with `API_KEY`" substring match. A
+`subprocess.run` site that does not pass `env=` is acceptable when
+it is a read-only auth-status probe with no untrusted input; the
+audit log flags any new call site that does not follow this rule.
 
 ### 4. HTTP request → handler (`src/main.py:Handler._request_is_authorized`)
 
