@@ -21,7 +21,7 @@ from pydantic import ValidationError
 import yaml
 
 from src.analyzer import AnalyzerError, IssueAnalyzer
-from src.main import _safe_local_directory, main
+from src.main import _safe_local_directory, _safe_relative_path, main
 from src.models import IssueMetrics
 
 
@@ -194,6 +194,58 @@ class GheHistoryDirGuardTest(unittest.TestCase):
                 self.assertIn("GHE_HISTORY_DIR", warnings)
             finally:
                 sys.argv = previous_argv
+
+
+class SafeRelativePathTest(unittest.TestCase):
+    """Round 6 P0: path-traversal helper used by HTTP handlers.
+
+    A user-supplied component like ``../../etc/passwd`` must be rejected
+    even if the surrounding code does its own ``.name != decoded`` check.
+    """
+
+    def test_relative_file_inside_base_is_accepted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            (base / "owner_repo_20260724.md").write_text("# brief", encoding="utf-8")
+            resolved = _safe_relative_path("owner_repo_20260724.md", base)
+            self.assertTrue(resolved.is_file())
+
+    def test_parent_directory_traversal_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp) / "reports"
+            base.mkdir()
+            with self.assertRaises(ValueError):
+                _safe_relative_path("../etc/passwd", base)
+
+    def test_nested_parent_directory_traversal_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            with self.assertRaises(ValueError):
+                _safe_relative_path("a/b/../../../../etc/passwd", base)
+
+    def test_nul_byte_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            with self.assertRaises(ValueError):
+                _safe_relative_path("good.md\x00evil", base)
+
+    def test_empty_name_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            with self.assertRaises(ValueError):
+                _safe_relative_path("", base)
+
+    def test_oversized_name_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            with self.assertRaises(ValueError):
+                _safe_relative_path("a" * 201, base)
+
+    def test_absolute_path_component_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            with self.assertRaises(ValueError):
+                _safe_relative_path("/etc/passwd", base)
 
 
 if __name__ == "__main__":

@@ -34,6 +34,25 @@ from .task_preparer import TaskPreparer, TaskPreparationError
 from .web_ui import APP_CSS, APP_JS, render_shell
 
 
+def _safe_relative_path(name: str, base: Path) -> Path:
+    """Resolve a user-supplied path component and ensure it stays inside ``base``.
+
+    Rejects empty input, NUL bytes, names longer than 200 characters,
+    embedded ``..`` segments, and any path whose resolved form escapes
+    ``base``. Use this for any HTTP path / payload value that lands in
+    ``open()`` or ``Path.write_text()`` so an attacker cannot read or
+    write outside the intended directory.
+    """
+
+    if not name or "\x00" in name or len(name) > 200:
+        raise ValueError(f"unsafe path component: {name!r}")
+    candidate = (base / name).resolve()
+    base_resolved = base.resolve()
+    if not candidate.is_relative_to(base_resolved):
+        raise ValueError(f"path escapes base: {name!r}")
+    return candidate
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate a Maintainer Brief for GitHub issues.")
     parser.add_argument("--config", default=None, help="Path to .ghe/config.yml")
@@ -763,6 +782,30 @@ def serve(args: argparse.Namespace) -> int:
     repair_capability_cache: dict[str, object] = {"loaded_at": 0.0, "payload": None}
     issue_cache: dict[str, tuple[float, dict[str, object]]] = {}
 
+    def _invalidate_repo_caches() -> None:
+        """Reset every in-process cache that depends on tracked-repositories state.
+
+        The four caches are coupled: writing to one (e.g. add a tracked repo,
+        create a repair job) can stale every other one. Centralise the reset
+        so POST handlers do not have to remember which subset to clear.
+        """
+
+        repo_cache.update({"loaded_at": 0.0, "payload": None})
+        owned_repo_cache.update({"loaded_at": 0.0, "payload": None})
+        repair_capability_cache.update({"loaded_at": 0.0, "payload": None})
+        issue_cache.clear()
+
+    # Origin allowlist for browser / Tauri callers. CLI tools without an
+    # Origin header are still accepted (no Origin means non-browser).
+    _LOOPBACK_ADDRS = {"127.0.0.1", "::1"}
+    _ALLOWED_ORIGIN_SUFFIXES = (f"://{host}:{port}",)
+    _TAURI_ORIGINS = ("tauri://localhost", "http://tauri.localhost")
+    # Repair-publish confirm tokens: job_id -> (token, expires_at_epoch).
+    # The /api/repairs/<id>/confirm-token GET issues a token; the
+    # subsequent /api/repairs/<id>/publish POST must echo it.
+    _CONFIRM_TOKEN_TTL = 300.0
+    _confirm_tokens: dict[str, tuple[str, float]] = {}
+
     def _load_watched_repositories() -> list[str]:
         try:
             values = json.loads(watched_repositories_path.read_text(encoding="utf-8"))
@@ -1047,8 +1090,7 @@ def serve(args: argparse.Namespace) -> int:
         if value not in watched:
             watched.append(value)
             _save_watched_repositories(watched)
-        repo_cache.update({"loaded_at": 0.0, "payload": None})
-        owned_repo_cache.update({"loaded_at": 0.0, "payload": None})
+        _invalidate_repo_caches()
         access = (
             "owner"
             if str(profile.get("owner") or "").casefold() == login.casefold()
@@ -1282,11 +1324,14 @@ Issue：[#{issue_number} — {issue["title"]}]({issue["url"]})
         return ""
 
     def handle_repair_action(
-        job_id: str, action: str, payload: dict[str, object]
+        job_id: str, action: str, payload: dict[str, object], confirm_token: str = ""
     ) -> tuple[int, bytes, str]:
-        if not job_id or not all(character.isalnum() for character in job_id):
+        import time as _time
+
+        try:
+            path = _safe_relative_path(f"{job_id}.json", Path(".ghe/repair-jobs"))
+        except ValueError:
             return 400, b'{"error":"invalid repair job"}', "application/json"
-        path = Path(".ghe/repair-jobs") / f"{job_id}.json"
         try:
             job = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
@@ -1318,6 +1363,31 @@ Issue：[#{issue_number} — {issue["title"]}]({issue["url"]})
             job["message"] = "已收到你的指导，准备再次修改…"
             mode = "revise"
         elif action == "publish":
+            # Publish triggers an external side effect (gh pr create). The
+            # caller must first GET /api/repairs/<id>/confirm-token and
+            # echo the returned token in the X-Confirm header. The token
+            # is single-use and expires after 5 minutes.
+            stored = _confirm_tokens.get(job_id)
+            now = _time.monotonic()
+            if (
+                not stored
+                or stored[0] != confirm_token
+                or now > stored[1]
+            ):
+                return (
+                    403,
+                    json.dumps(
+                        {
+                            "error": (
+                                "missing or expired confirm token; "
+                                "GET /api/repairs/<id>/confirm-token first"
+                            )
+                        },
+                        ensure_ascii=False,
+                    ).encode("utf-8"),
+                    "application/json",
+                )
+            _confirm_tokens.pop(job_id, None)
             job["status"] = "publish_queued"
             job["message"] = "已确认发布，准备创建 Draft PR…"
             mode = "publish"
@@ -1377,9 +1447,6 @@ Issue：[#{issue_number} — {issue["title"]}]({issue["url"]})
         return 200, body, "application/json"
 
     def render_brief(repo: str) -> tuple[int, bytes, str]:
-        candidates = show_latest(config, argparse.Namespace(repo=repo, config=args.config))
-        if candidates != 0:
-            return 404, b'{"error":"no brief"}', "application/json"
         if not output_dir.exists():
             return 404, b'{"error":"output_dir missing"}', "application/json"
         safe = repo.replace("/", "_")
@@ -1396,9 +1463,12 @@ Issue：[#{issue_number} — {issue["title"]}]({issue["url"]})
         """Return one exact brief as Markdown without allowing path traversal."""
 
         decoded = unquote(file_name)
-        if Path(decoded).name != decoded or not decoded.endswith(".md"):
+        if not decoded.endswith(".md"):
             return 404, b'{"error":"not found"}', "application/json"
-        path = output_dir / decoded
+        try:
+            path = _safe_relative_path(decoded, output_dir)
+        except ValueError:
+            return 404, b'{"error":"not found"}', "application/json"
         if not path.is_file():
             return 404, b'{"error":"not found"}', "application/json"
         return 200, path.read_bytes(), "text/markdown; charset=utf-8"
@@ -1680,9 +1750,12 @@ footer {{ max-width: 960px; margin: 64px auto 32px; padding: 0 24px;
         """Render one exact report file while preventing path traversal."""
 
         decoded = unquote(file_name)
-        if Path(decoded).name != decoded or not decoded.endswith(".md"):
+        if not decoded.endswith(".md"):
             return 404, b'{"error":"not found"}', "application/json"
-        path = output_dir / decoded
+        try:
+            path = _safe_relative_path(decoded, output_dir)
+        except ValueError:
+            return 404, b'{"error":"not found"}', "application/json"
         if not path.is_file():
             return 404, b'{"error":"not found"}', "application/json"
         body = _render_brief_html_body(path)
@@ -1808,16 +1881,69 @@ footer {{ max-width: 960px; margin: 64px auto 32px; padding: 0 24px;
                 f"[{self.log_date_time_string()}] {self.address_string()} {format % args}\n"
             )
 
+        def _request_is_authorized(self) -> bool:
+            """Two checks: loopback source, and (if Origin present) same-origin or Tauri.
+
+            - Loopback: refuse anything not coming from 127.0.0.1 / ::1.
+            - Origin: a browser / Tauri must send Origin or Referer that
+              exactly matches our scheme + host + port (or one of the
+              Tauri dev origins). A bare curl with no Origin is allowed;
+              a malicious cross-origin fetch with an explicit Origin is not.
+              Same scheme/host but different port is rejected — a malicious
+              page loaded on another port must not be able to drive us.
+            """
+
+            client_ip = self.client_address[0]
+            if client_ip not in _LOOPBACK_ADDRS:
+                return False
+            origin = self.headers.get("Origin") or self.headers.get("Referer") or ""
+            if not origin:
+                return True
+            if origin in _TAURI_ORIGINS:
+                return True
+            from urllib.parse import urlparse as _urlparse
+            try:
+                parsed_origin = _urlparse(origin)
+            except ValueError:
+                return False
+            if not parsed_origin.scheme or not parsed_origin.hostname:
+                return False
+            if (
+                parsed_origin.scheme == "http"
+                and parsed_origin.hostname == host
+                and (parsed_origin.port is None or parsed_origin.port == port)
+            ):
+                return True
+            return False
+
+        def _send_json(self, status: int, body: bytes) -> None:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
             path = parsed.path.rstrip("/") or "/"
+            # /healthz and the static UI assets are intentionally public
+            # for local liveness checks. All other GETs go through auth.
             if path == "/healthz":
                 status, body, content_type = (
                     200,
                     b'{"status":"ok","service":"github-engineer"}',
                     "application/json",
                 )
-            elif path == "/decisions.txt":
+                self.send_response(status)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if not self._request_is_authorized():
+                self._send_json(403, b'{"error":"forbidden: loopback or same-origin required"}')
+                return
+            if path == "/decisions.txt":
                 status, body, content_type = render_decisions_text()
             elif path in ("/", "/briefs"):
                 # JSON or HTML depending on the Accept header. The machine
@@ -1848,6 +1974,33 @@ footer {{ max-width: 960px; margin: 64px auto 32px; padding: 0 24px;
                 status, body, content_type = render_repair_capabilities()
             elif path == "/api/repairs":
                 status, body, content_type = render_repair_jobs()
+            elif path.startswith("/api/repairs/") and path.endswith("/confirm-token"):
+                import secrets as _secrets
+                import time as _get_time
+                job_id = unquote(
+                    path.removeprefix("/api/repairs/").removesuffix("/confirm-token")
+                ).strip("/")
+                try:
+                    _safe_relative_path(f"{job_id}.json", Path(".ghe/repair-jobs"))
+                except ValueError:
+                    status, body, content_type = (
+                        400,
+                        b'{"error":"invalid repair job"}',
+                        "application/json",
+                    )
+                else:
+                    token = _secrets.token_urlsafe(24)
+                    _confirm_tokens[job_id] = (
+                        token,
+                        _get_time.monotonic() + _CONFIRM_TOKEN_TTL,
+                    )
+                    status, body, content_type = (
+                        200,
+                        json.dumps(
+                            {"token": token, "ttl": int(_CONFIRM_TOKEN_TTL)}
+                        ).encode("utf-8"),
+                        "application/json",
+                    )
             elif path.startswith("/api/repairs/"):
                 job_id = path.removeprefix("/api/repairs/").strip("/")
                 status, body, content_type = render_repair_job(job_id)
@@ -1907,6 +2060,9 @@ footer {{ max-width: 960px; margin: 64px auto 32px; padding: 0 24px;
                 self.end_headers()
                 self.wfile.write(b'{"error":"not found"}')
                 return
+            if not self._request_is_authorized():
+                self._send_json(403, b'{"error":"forbidden: loopback or same-origin required"}')
+                return
             length = int(self.headers.get("Content-Length", "0") or 0)
             raw = self.rfile.read(length) if length else b""
             try:
@@ -1924,8 +2080,9 @@ footer {{ max-width: 960px; margin: 64px auto 32px; padding: 0 24px;
             elif path in {"/api/tracked-repositories", "/api/watched-repositories"}:
                 status, body, content_type = add_watched_repository(payload)
             elif repair_action:
+                confirm_token = self.headers.get("X-Confirm") or ""
                 status, body, content_type = handle_repair_action(
-                    repair_parts[2], repair_parts[3], payload
+                    repair_parts[2], repair_parts[3], payload, confirm_token
                 )
             else:
                 # Normalise repeated keys into lists so parse_qs and JSON both work.

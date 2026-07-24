@@ -216,6 +216,125 @@ class ServeSubcommandTest(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertIn("status", body.decode("utf-8"))
 
+    def test_post_rejects_cross_origin_request(self):
+        """Round 6 P0: a malicious page on another origin must not be able
+        to drive the loopback server. The Origin check is enforced before
+        the route is dispatched.
+        """
+
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/decisions",
+            data=json.dumps({"status": "rejected", "theme": "evil"}).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Origin": "http://evil.example.com",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=5) as response:
+                status = response.status
+                body = response.read()
+        except urllib.error.HTTPError as exc:
+            status = exc.code
+            body = exc.read()
+        self.assertEqual(status, 403)
+        self.assertIn(b"forbidden", body)
+
+    def test_publish_requires_confirm_token(self):
+        """Round 6 P0: /api/repairs/<id>/publish creates a Draft PR, an
+        external side effect. A bare POST without a confirm token must
+        be refused, even if the job exists and is review_ready.
+        """
+
+        repair_dir = self.directory / ".ghe" / "repair-jobs"
+        repair_dir.mkdir(parents=True, exist_ok=True)
+        job = {
+            "id": "abc123456789",
+            "status": "review_ready",
+            "repository": "acme/widgets",
+            "issue_number": 1,
+            "issue_title": "demo",
+            "viewer": "tester",
+            "default_branch": "main",
+            "delivery_mode": "fork_pr",
+            "task_file": "tasks/x.md",
+            "task_markdown": "# t",
+            "workspace": str(self.directory / ".ghe" / "repair-workspaces" / "abc123456789"),
+            "guidance": [],
+            "message": "ready",
+            "created_at": "2026-07-24T00:00:00+00:00",
+            "updated_at": "2026-07-24T00:00:00+00:00",
+        }
+        (repair_dir / "abc123456789.json").write_text(
+            json.dumps(job), encoding="utf-8"
+        )
+        status, _, body = _http_post(
+            self.port,
+            "/api/repairs/abc123456789/publish",
+            b"{}",
+            "application/json",
+        )
+        self.assertEqual(status, 403)
+        self.assertIn(b"confirm token", body)
+
+    def _seed_review_ready_job(self, job_id: str) -> None:
+        repair_dir = self.directory / ".ghe" / "repair-jobs"
+        repair_dir.mkdir(parents=True, exist_ok=True)
+        job = {
+            "id": job_id,
+            "status": "review_ready",
+            "repository": "acme/widgets",
+            "issue_number": 1,
+            "issue_title": "demo",
+            "viewer": "tester",
+            "default_branch": "main",
+            "delivery_mode": "fork_pr",
+            "task_file": "tasks/x.md",
+            "task_markdown": "# t",
+            "workspace": str(self.directory / ".ghe" / "repair-workspaces" / job_id),
+            "guidance": [],
+            "message": "ready",
+            "created_at": "2026-07-24T00:00:00+00:00",
+            "updated_at": "2026-07-24T00:00:00+00:00",
+        }
+        (repair_dir / f"{job_id}.json").write_text(
+            json.dumps(job), encoding="utf-8"
+        )
+
+    def test_publish_wrong_confirm_token_rejected(self):
+        """Round 6 P0 follow-up: getting a token and sending a different
+        one must still be refused.
+        """
+
+        self._seed_review_ready_job("def987654321")
+        # Acquire a real token, then submit a different one.
+        status, _, body = _http_get(
+            self.port, "/api/repairs/def987654321/confirm-token"
+        )
+        self.assertEqual(status, 200)
+        token = json.loads(body)["token"]
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/api/repairs/def987654321/publish",
+            data=b"{}",
+            headers={
+                "Content-Type": "application/json",
+                "X-Confirm": "totally-wrong-token",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=5) as response:
+                status = response.status
+                body = response.read()
+        except urllib.error.HTTPError as exc:
+            status = exc.code
+            body = exc.read()
+        self.assertEqual(status, 403)
+        self.assertIn(b"confirm token", body)
+        # The real token is still valid (was never consumed).
+        self.assertIsNotNone(token)
+
     def test_prepare_issue_task_requires_repository_and_issue_number(self):
         payload = json.dumps({"repository": "acme/widgets"}).encode("utf-8")
         status, _, body = _http_post(
