@@ -60,7 +60,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--repo",
         default=None,
-        help="Repository full name, for example owner/name. Comma-separated for multiple repos.",
+        help=(
+            "Repository full name, for example owner/name. Comma-separated for multiple repos. "
+            "Deprecated: prefer the top-level `repos:` list in .ghe/config.yml."
+        ),
     )
     parser.add_argument("--memory-path", default=".ghe/memory/decisions.yml", help="Decision memory YAML path")
     parser.add_argument("--record-decision", choices=("accepted", "rejected", "deferred"))
@@ -113,6 +116,25 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    # When the user runs ``ghe`` with no subcommand and no target at
+    # all, give a pointed hint instead of crashing on a missing
+    # config. We only short-circuit when the user clearly did not
+    # intend to analyze anything (no --config, no --repo).
+    no_subcommand = not (
+        args.record_decision
+        or args.delegate_task
+        or args.list_decisions
+        or args.init
+        or args.serve
+        or args.show_latest
+    )
+    if no_subcommand and not args.config and not args.repo:
+        print(
+            "ghe: nothing to do. First time? Run `ghe --init` to write a starter .ghe/config.yml.",
+            file=sys.stderr,
+        )
+        print("Hint: try `ghe --help` for the full flag list, or `ghe --init` to start.", file=sys.stderr)
+        return 2
     try:
         if args.record_decision:
             return record_decision(args)
@@ -267,6 +289,7 @@ def main() -> int:
 _ERROR_HINTS: tuple[tuple[str, str], ...] = (
     ("Missing model.api_key", "Set the LLM_API_KEY environment variable or add model.api_key to .ghe/config.yml."),
     ("Missing model.model_name", "Set the LLM_MODEL environment variable or add model.model_name to .ghe/config.yml."),
+    ("A decision needs at least one", "Pass --issue-number N (or several) and/or --theme <keyword> so the decision memory knows which scope it applies to."),
     ("rate limit", "Wait for the GitHub API rate limit to reset, or supply a GITHUB_TOKEN with higher quota."),
     ("Could not access repository", "Verify the repository owner/name and that GITHUB_TOKEN has read access."),
     ("Failed to fetch issues", "Check that the repository exists and the GITHUB_TOKEN has 'repo' or 'public_repo' scope."),
@@ -812,6 +835,15 @@ def serve(args: argparse.Namespace) -> int:
             values = json.loads(watched_repositories_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return []
+        # The watched-repositories file is deprecated; users should keep
+        # the canonical list in .ghe/config.yml's `repos:` key. We still
+        # honour the file (so older installs keep working) but warn once
+        # per process so the path forward is visible.
+        print(
+            f"warning: {watched_repositories_path} is deprecated; "
+            "move the list into .ghe/config.yml under the `repos:` key.",
+            file=sys.stderr,
+        )
         return [
             str(value)
             for value in values

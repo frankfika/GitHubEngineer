@@ -69,7 +69,15 @@ class LLMClient:
         """Generate and parse a JSON object."""
 
         content = self.generate(prompt, system)
-        cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", content.strip(), flags=re.IGNORECASE)
+        # Strip *every* fenced code block, not just the outer one. A
+        # response like ``\`\`\`json\n{...}\n\`\`\`\nsome prose\n\`\`\`json\n{...}\n\`\`\```
+        # should leave the first JSON object intact while the second
+        # one disappears — the previous single-pass regex kept the
+        # first fence and removed only the trailing one, then a nested
+        # ``match.start()`` could land inside the second block.
+        cleaned = re.sub(
+            r"```(?:json)?\s*|\s*```", "", content, flags=re.IGNORECASE
+        ).strip()
         decoder = json.JSONDecoder()
         try:
             payload, _ = decoder.raw_decode(cleaned)

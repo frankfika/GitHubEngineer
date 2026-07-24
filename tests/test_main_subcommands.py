@@ -184,5 +184,24 @@ class ListDecisionsSubcommandTest(unittest.TestCase):
         self.assertIn("No decisions recorded", text)
 
 
+class NoSubcommandHintTest(unittest.TestCase):
+    """Round 6: a bare ``ghe`` invocation with no target should print
+    a hint and exit 2 instead of falling through to the analysis
+    branch and crashing on a missing --config.
+    """
+
+    def test_no_args_prints_hint_and_exits_2(self):
+        previous = sys.argv
+        try:
+            sys.argv = ["ghe"]
+            with patch("sys.stderr") as stderr:
+                self.assertEqual(main(), 2)
+            text = "".join(call.args[0] for call in stderr.write.call_args_list)
+            self.assertIn("nothing to do", text)
+            self.assertIn("ghe --init", text)
+        finally:
+            sys.argv = previous
+
+
 if __name__ == "__main__":
     unittest.main()

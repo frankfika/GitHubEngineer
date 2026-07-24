@@ -332,5 +332,54 @@ class AtomicWriteJsonTest(unittest.TestCase):
             self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["v"], 2)
 
 
+class SanitizeUntrustedFieldTest(unittest.TestCase):
+    """Round 6 P0: LLM-provided fields must not propagate injection vectors.
+
+    The four free-form fields on the task draft (``objective``,
+    ``risks``, ``acceptance_criteria``, ``test_plan``) are all text the
+    model invented. They are rendered into a Markdown file that a
+    coding agent will then read. A single ``javascript:`` URL or stray
+    ``<script>`` tag is enough to turn the task file into an injection.
+    """
+
+    def test_javascript_url_is_neutralized(self):
+        from src.task_preparer import _sanitize_untrusted_field
+
+        cleaned = _sanitize_untrusted_field("click [here](javascript:alert(1))")
+        self.assertIn("(#)", cleaned)
+        self.assertNotIn("javascript:", cleaned)
+
+    def test_script_tag_is_removed(self):
+        from src.task_preparer import _sanitize_untrusted_field
+
+        cleaned = _sanitize_untrusted_field("hello <script>alert(1)</script> world")
+        self.assertNotIn("<script", cleaned.lower())
+        self.assertNotIn("alert", cleaned)
+        self.assertIn("hello", cleaned)
+        self.assertIn("world", cleaned)
+
+    def test_stray_fenced_code_block_is_removed(self):
+        from src.task_preparer import _sanitize_untrusted_field
+
+        cleaned = _sanitize_untrusted_field("start ```python\nimport os\n``` end")
+        # The fenced block is stripped; the surrounding prose stays.
+        self.assertIn("start", cleaned)
+        self.assertIn("end", cleaned)
+        self.assertNotIn("import os", cleaned)
+
+    def test_long_field_is_truncated(self):
+        from src.task_preparer import _UNTRUSTED_FIELD_MAX_LEN, _sanitize_untrusted_field
+
+        long_value = "x" * (_UNTRUSTED_FIELD_MAX_LEN + 100)
+        cleaned = _sanitize_untrusted_field(long_value)
+        self.assertLessEqual(len(cleaned), _UNTRUSTED_FIELD_MAX_LEN + 1)  # +1 for trailing ellipsis
+
+    def test_clean_text_passes_through(self):
+        from src.task_preparer import _sanitize_untrusted_field
+
+        cleaned = _sanitize_untrusted_field("Verify the cached repo is invalidated after each POST.")
+        self.assertEqual(cleaned, "Verify the cached repo is invalidated after each POST.")
+
+
 if __name__ == "__main__":
     unittest.main()
