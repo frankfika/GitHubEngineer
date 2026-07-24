@@ -119,6 +119,16 @@ ghe --show-latest                     # or print the newest one to stdout
 
 That's the whole loop. From here the fun is in the **Decision / Task / Agent workflow** below — you can chain `brief → record → prepare → delegate` and have a coding agent pick up the work in a few minutes.
 
+### What you see on first launch (`ghe --serve`)
+
+The web UI is **idle by default**: it never auto-fetches issues for any repository. When you open `http://127.0.0.1:8765/ui/` you get an empty-state home with a sidebar list of the repos you have configured (or added through the UI), and a heading that reads **「未选择仓库」**. Nothing is read from GitHub until **you** act:
+
+- **Click a sidebar pill** to start monitoring that repo — the issues endpoint is fetched, the heading switches to "正在读取 X", and on success the inbox fills in.
+- **Pick a repo from the top-bar dropdown** — same behavior, also an explicit choice.
+- **Click 「+ 添加仓库」** in the top right to paste a URL or pick from your owned repos. The added repo is auto-selected and fetched.
+
+This is deliberate: a config file that lists a default `repo.owner` / `repo.name` does **not** mean "open the UI and start pulling issues for that repo". The user has to opt in. If you want a one-click start, the top-bar dropdown's first option is still there — but it never pre-selects.
+
 ---
 
 ## How it works
@@ -280,6 +290,21 @@ ghe --serve --serve-host 127.0.0.1
 - **The only write path is `POST /decisions`.** It writes to the same `.ghe/memory/decisions.yml` as the CLI. Everything else is read-only.
 - **No background daemon.** Run it under `systemd`, `tmux`, or a process manager for long-running use.
 
+**Idle-by-default state machine.** The main panel never shows a misleading "正在读取 X" with a stuck spinner. Concretely:
+
+- On startup the heading is **「未选择仓库」** and the issues inbox is an empty-state card. No API call is in flight.
+- The **first** click anywhere — sidebar pill, top-bar select, or 「+ 添加仓库」 — is what triggers `GET /api/repositories/<repo>/issues`. Token + access are checked at that moment, not before.
+- If a fetch fails, the heading rolls back to **「X · 读取失败」** in a warning color, the inbox shows an error card with a 「重试一次」 button, and the next click on the same pill (or a different one) is what retries. There is no auto-retry and no silent background re-poll.
+- Each load call carries an in-flight token; clicking a second pill before the first returns discards the first response instead of letting it overwrite the second pill's inbox.
+
+**Mock mode for UI work.** Set `GHE_MOCK_REPOSITORIES=1` to skip the GitHub list call and serve two fixed repos (one owner, one monitor). The issues endpoint and `POST /api/tracked-repositories` still hit the real API, so private repos and write actions still require a `GITHUB_TOKEN` — but the sidebar, owner/monitor badges, idle/selected states, and empty-state card all render without one. Useful for screenshots, the failure-recovery flow, and developing UI changes when you don't have credentials handy.
+
+```bash
+GHE_MOCK_REPOSITORIES=1 ghe --serve --serve-host 127.0.0.1
+# → opens to a sidebar with two pills (frankfika/GitHubEngineer + OpenCSG-Strategy/GitHubEngineer),
+#   green "我的" / amber "外部" badges, heading "未选择仓库"
+```
+
 ---
 
 ## Desktop app (Tauri)
@@ -386,6 +411,7 @@ See [`.ghe/config.example.yml`](.ghe/config.example.yml) for a fully-annotated t
 | `GHE_HISTORY_DIR` | `.ghe/history` | Override the trend baseline directory. Pass an empty string to disable the trend diff entirely. |
 | `GHE_SERVE_PORT` | `8765` | Port for `ghe --serve`. |
 | `GHE_LOG_LEVEL` | (unset) | Reserved for future use; ignored today. |
+| `GHE_MOCK_REPOSITORIES` | (unset) | When set to `1`, the local web service short-circuits `/api/repositories` with a fixed owner + monitor pair and the SSR repos list is replaced with the same two. Useful for UI development, screenshots, and the failure-recovery flow when you don't have a `GITHUB_TOKEN` handy. The issues endpoint and write actions are not mocked. |
 | `GITHUB_STEP_SUMMARY` | (unset) | When set, the report is appended to the file at this path (this is what GitHub Actions uses for `$GITHUB_STEP_SUMMARY`). |
 
 ---
@@ -617,6 +643,12 @@ Yes. Set `repos:` to a list in `.ghe/config.yml`, or pass `--repo owner/a,owner/
 **Q: How do I record a maintainer decision so the same work is not proposed again?**
 `ghe --record-decision rejected --theme "dark mode" --reason "Not on this year's roadmap"`. Run `ghe --list-decisions` to see what is currently in memory. Decisions are deduplicated by `(status, theme, issue_number)`.
 
+**Q: I opened `http://127.0.0.1:8765/ui/` and the main panel is empty. Did something break?**
+No — the UI is idle by default. The heading reads 「未选择仓库」, the issue inbox shows an empty-state card, and no GitHub request has been made yet. To start, click a pill in the left sidebar or pick a repo from the top-bar dropdown. Adding a repo through 「+ 添加仓库」 also auto-selects it and pulls the issue list. See the [What you see on first launch](#what-you-see-on-first-launch-ghe---serve) section for the full state machine.
+
+**Q: How do I preview the UI without a `GITHUB_TOKEN`?**
+Run `GHE_MOCK_REPOSITORIES=1 ghe --serve --serve-host 127.0.0.1`. The mock only covers `/api/repositories` (returns two fixed repos, one owner + one monitor), so the sidebar, owner/monitor badges, the idle-by-default state, the success path on a public repo, and the failure-recovery flow all work. Issue fetches and the `+ 添加仓库` POST still hit the real API; private repos and write actions still need a token.
+
 **Q: Can I cap spend?**
 Yes. Lower `analysis.max_issues_for_llm` (the analyzer drops the lowest-signal candidates) or `analysis.max_prompt_chars` (hard cap on the prompt). Pin a cheaper model via `LLM_MODEL` or `model.model_name`.
 
@@ -640,6 +672,7 @@ Yes. Run `ghe --serve` and open `http://127.0.0.1:8765/ui/`. See the [Local web 
 - **"GitHub API rate limit exceeded"**: supply a `GITHUB_TOKEN` (free tier raises the limit from 60/hr to 5 000/hr) or wait for the reset.
 - **"Could not access repository"**: verify the repository `owner/name` and that `GITHUB_TOKEN` has read access.
 - **"Failed to fetch issues"**: check that the repository exists and the `GITHUB_TOKEN` has `repo` or `public_repo` scope.
+- **"I just want to look at the UI but I don't have a token"**: set `GHE_MOCK_REPOSITORIES=1` before starting the server. The sidebar, owner/monitor badges, and idle/selected states will render with no GitHub calls. You will still need a token to actually pull issues or add a repo.
 - **Empty `## Top Priorities`**: the lookback window is too narrow, or every issue is filtered by `decision_memory` (rejected themes). Run `ghe --list-decisions` to inspect.
 - **Brief includes a `--prepare-issue <N>` error**: issue N is not in the current brief's Top N. Re-run the brief first, then call `--prepare-issue` with one of the recommended numbers.
 - **Desktop app says `Timed out waiting for github-engineer-desktop`**: the WebView is not connecting to `127.0.0.1:8765`. Check `lsof -iTCP:8765 -sTCP:LISTEN` and inspect `.codex/run/desktop.log`. See [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md) for expanded recipes.
