@@ -113,5 +113,75 @@ def test_get_repo_failure_surfaces_as_typed_error():
     assert "missing/repo" in str(exc.value)
 
 
+def test_resolve_token_prefers_configured_value_without_shelling_out():
+    with patch("src.github_client.subprocess.run") as run:
+        assert GitHubClient.resolve_token("configured") == "configured"
+    run.assert_not_called()
+
+
+def test_resolve_token_uses_existing_gh_cli_login():
+    result = SimpleNamespace(returncode=0, stdout="secret-from-keyring\n")
+    with patch("src.github_client.subprocess.run", return_value=result) as run:
+        token = GitHubClient.resolve_token()
+    assert token == "secret-from-keyring"
+    run.assert_called_once()
+
+
+def test_list_owned_repositories_returns_desktop_switcher_fields():
+    updated_at = datetime.now(timezone.utc)
+    repository = SimpleNamespace(
+        full_name="alice/project",
+        name="project",
+        owner=SimpleNamespace(login="alice"),
+        private=True,
+        archived=False,
+        open_issues_count=4,
+        stargazers_count=12,
+        forks_count=3,
+        subscribers_count=2,
+        language="Python",
+        description="Demo",
+        updated_at=updated_at,
+        pushed_at=updated_at,
+        html_url="https://github.com/alice/project",
+    )
+    user = SimpleNamespace(
+        login="alice",
+        get_repos=MagicMock(return_value=[repository]),
+    )
+    with patch("src.github_client.Github") as gh_cls:
+        gh_cls.return_value.get_user.return_value = user
+        gh_cls.return_value.search_issues.return_value = [
+            SimpleNamespace(repository=SimpleNamespace(full_name="alice/project"))
+        ]
+        login, repositories = GitHubClient.list_owned_repositories("token")
+    assert login == "alice"
+    assert repositories[0]["full_name"] == "alice/project"
+    assert repositories[0]["private"] is True
+    assert repositories[0]["open_issues_count"] == 1
+    assert repositories[0]["stars"] == 12
+    assert repositories[0]["followers"] is None
+
+
+def test_get_authenticated_login_does_not_enumerate_repositories():
+    user = SimpleNamespace(login="alice", get_repos=MagicMock())
+    with patch("src.github_client.Github") as gh_cls:
+        gh_cls.return_value.get_user.return_value = user
+        assert GitHubClient.get_authenticated_login("token") == "alice"
+    user.get_repos.assert_not_called()
+
+
+def test_get_issue_summaries_avoids_reaction_api_calls():
+    issue = _make_issue(9)
+    repo = _make_repo([issue])
+    with patch("src.github_client.Github") as gh_cls:
+        gh_cls.return_value.get_repo.return_value = repo
+        client = GitHubClient("token", "acme/widgets")
+        summaries = client.get_issue_summaries()
+    assert summaries[0]["number"] == 9
+    assert summaries[0]["labels"] == ["bug"]
+    issue.get_reactions.assert_not_called()
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))

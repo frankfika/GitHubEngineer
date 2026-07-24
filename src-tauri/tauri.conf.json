@@ -1,0 +1,40 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "GitHub Engineer",
+  "version": "1.0.0",
+  "identifier": "com.opencsg.github-engineer",
+  "build": {
+    "beforeDevCommand": ".venv/bin/python -m src.main --config .ghe/config.yml --serve --serve-host 127.0.0.1",
+    "devUrl": "http://127.0.0.1:8765/ui/",
+    "frontendDist": "../desktop"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "GitHub Engineer",
+        "width": 1180,
+        "height": 760,
+        "minWidth": 820,
+        "minHeight": 620,
+        "center": true,
+        "resizable": true,
+        "fullscreen": false,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/icon.png"
+    ],
+    "category": "DeveloperTool",
+    "shortDescription": "AI maintainer assistant for GitHub repositories"
+  }
+}

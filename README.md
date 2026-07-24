@@ -179,9 +179,28 @@ Important fields:
 
 ## Local Web Service
 
-`ghe --serve` starts a read-only HTTP service on `127.0.0.1:8765` so
-you can browse the briefs and decision memory from a browser. Use
-`--serve-host 0.0.0.0` to expose it on the LAN.
+### Tauri desktop app
+
+The primary local experience is the Tauri 2 desktop app. It starts the Python
+analysis service automatically and loads the conversation UI in a native
+WebView:
+
+```bash
+cargo install tauri-cli --version 2.11.4 --locked
+./script/build_and_run.sh
+```
+
+Codex Desktop also exposes the same command as the project **Run** action via
+`.codex/environments/environment.toml`.
+
+### HTTP service
+
+`ghe --serve` starts a local maintainer-assistant UI and its HTTP API on
+`127.0.0.1:8765`. Open `http://127.0.0.1:8765/ui/` to ask for the latest
+brief, inspect the current workspace, and record maintainer decisions through
+a compact conversation interface. The layout adapts to desktop and mobile and
+follows the system light/dark appearance. Use `--serve-host 0.0.0.0` only when
+you intentionally want to expose it on the LAN.
 
 ```bash
 ghe --serve --serve-host 127.0.0.1
@@ -190,6 +209,10 @@ ghe --serve --serve-host 127.0.0.1
 
 | Route | Method | Purpose |
 | --- | --- | --- |
+| `/ui/` | `GET` | Conversation-first maintainer assistant. |
+| `/ui/briefs` | `GET` | Responsive brief history. |
+| `/ui/briefs/<file>` | `GET` | Render one exact brief as HTML. |
+| `/ui/decisions` | `GET` | Decision memory with an in-page decision dialog. |
 | `/` | `GET` | Index of all briefs as JSON. |
 | `/briefs` | `GET` | Same as `/`. |
 | `/brief/<owner>/<repo>` | `GET` | Latest brief for the repository, returned as Markdown. |
@@ -198,10 +221,11 @@ ghe --serve --serve-host 127.0.0.1
 | `/decisions` | `POST` | Record a new decision. JSON body with `status` (`accepted` / `rejected` / `deferred`), `theme`, `reason`, `goal`, `guardrail`, `issue_number`. Returns 201 + the persisted record. |
 | `/healthz` | `GET` | Liveness probe for load balancers. |
 
-The service is intentionally minimal: no auth, bind to `127.0.0.1` by
-default, no write paths except `POST /decisions` (which writes to the
-same `.ghe/memory/decisions.yml` as the CLI). For a longer-running
-service, run it under `systemd`, `tmux`, or a process manager.
+The service remains intentionally minimal and dependency-free: there is no
+authentication, it binds to `127.0.0.1` by default, and the only write path is
+the explicit decision dialog / `POST /decisions` action (which writes to the
+same `.ghe/memory/decisions.yml` as the CLI). For a longer-running service,
+run it under `systemd`, `tmux`, or a process manager.
 
 ## Cost
 

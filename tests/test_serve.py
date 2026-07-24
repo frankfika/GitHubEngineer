@@ -165,6 +165,19 @@ class ServeSubcommandTest(unittest.TestCase):
         self.assertIn("text/markdown", headers.get("Content-Type", ""))
         self.assertIn(b"# Maintainer Brief", body)
 
+    def test_exact_brief_file_endpoint_returns_markdown(self):
+        status, headers, body = _http_get(
+            self.port, "/briefs/acme_widgets_20260721.md"
+        )
+        self.assertEqual(status, 200)
+        self.assertIn("text/markdown", headers.get("Content-Type", ""))
+        self.assertIn(b"# Maintainer Brief", body)
+
+    def test_exact_brief_file_endpoint_blocks_traversal(self):
+        status, _, body = _http_get(self.port, "/briefs/%2e%2e%2fconfig.yml")
+        self.assertEqual(status, 404)
+        self.assertEqual(json.loads(body), {"error": "not found"})
+
     def test_decisions_endpoint_returns_empty_array(self):
         status, _, body = _http_get(self.port, "/decisions")
         self.assertEqual(status, 200)
@@ -203,6 +216,14 @@ class ServeSubcommandTest(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertIn("status", body.decode("utf-8"))
 
+    def test_prepare_issue_task_requires_repository_and_issue_number(self):
+        payload = json.dumps({"repository": "acme/widgets"}).encode("utf-8")
+        status, _, body = _http_post(
+            self.port, "/api/tasks", payload, "application/json"
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("issue_number", body.decode("utf-8"))
+
     def test_ui_root_renders_html(self):
         import urllib.request
         request = urllib.request.Request(
@@ -226,8 +247,71 @@ class ServeSubcommandTest(unittest.TestCase):
             body = response.read().decode("utf-8")
         self.assertIn("<h1>", body)
         self.assertIn("Maintainer Brief", body)
-        # Inline rendering escapes user text and turns links into anchors.
-        self.assertNotIn("<script", body.lower())
+        # The only script is the trusted local progressive-enhancement asset;
+        # report Markdown itself is still escaped by the renderer.
+        self.assertIn('src="/ui/app.js"', body)
+        self.assertNotIn("<script>alert", body.lower())
+
+    def test_ui_brief_file_link_resolves(self):
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/ui/briefs/acme_widgets_20260721.md",
+            headers={"Accept": "text/html"},
+        )
+        with urllib.request.urlopen(request, timeout=5) as response:
+            self.assertEqual(response.status, 200)
+            body = response.read().decode("utf-8")
+        self.assertIn("Maintainer Brief", body)
+        self.assertIn("acme_widgets_20260721.md", body)
+
+    def test_ui_assets_and_conversation_shell(self):
+        status, _, repair_tasks = _http_get(self.port, "/api/repairs")
+        self.assertEqual(status, 200)
+        self.assertIsInstance(json.loads(repair_tasks), list)
+
+        status, headers, css = _http_get(self.port, "/ui/app.css")
+        self.assertEqual(status, 200)
+        self.assertIn("text/css", headers.get("Content-Type", ""))
+        self.assertIn(b"prefers-color-scheme", css)
+
+        status, headers, script = _http_get(self.port, "/ui/app.js")
+        self.assertEqual(status, 200)
+        self.assertIn("text/javascript", headers.get("Content-Type", ""))
+        self.assertIn(b"assistant-composer", script)
+        self.assertIn("自动修复".encode(), script)
+        self.assertIn("你的 Fork".encode(), script)
+        self.assertIn(b"/api/repair-capabilities", script)
+        self.assertIn(b"review_ready", script)
+        self.assertIn(b"/guidance", script)
+        self.assertIn(b"/publish", script)
+
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/ui/", headers={"Accept": "text/html"}
+        )
+        with urllib.request.urlopen(request, timeout=5) as response:
+            body = response.read().decode("utf-8")
+        self.assertIn("id='assistant-composer'", body)
+        self.assertIn("需要关注", body)
+        self.assertIn("近 30 天", body)
+        self.assertIn("分析 #42", body)
+        self.assertIn("当前仓库", body)
+        self.assertIn("点击切换", body)
+        self.assertIn('id="repair-inspector"', body)
+        self.assertIn('id="repair-task-list"', body)
+        self.assertNotIn('id="repair-dialog"', body)
+        self.assertIn('id="repair-guidance-input"', body)
+        self.assertIn("确认创建 Draft PR", body)
+        self.assertIn("从我的仓库选择", body)
+        self.assertIn("只会加载你主动加入清单的仓库", body)
+        self.assertIn('id="repo-switcher"', body)
+        self.assertNotIn("查看当前配置", body)
+
+    def test_add_watched_repository_validates_repo_name(self):
+        payload = json.dumps({"repository": "not-a-repository"}).encode("utf-8")
+        status, _, body = _http_post(
+            self.port, "/api/watched-repositories", payload, "application/json"
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("owner/repository", body.decode("utf-8"))
 
     def test_ui_decisions_renders_html(self):
         import urllib.request

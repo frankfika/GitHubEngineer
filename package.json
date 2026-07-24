@@ -1,0 +1,11 @@
+{
+  "name": "github-engineer-desktop",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Tauri desktop shell for GitHub Engineer",
+  "scripts": {
+    "desktop": "cargo tauri dev",
+    "desktop:build": "cargo tauri build",
+    "tauri": "cargo tauri"
+  }
+}

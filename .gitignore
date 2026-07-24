@@ -7,9 +7,16 @@ __pycache__/
 reports/
 dist/
 build/
+node_modules/
+src-tauri/target/
+.codex/run/
 *.egg-info/
 .ghe/config.yml
 .ghe/config.local.yml
+.ghe/monitoring/
+.ghe/repair-jobs/
+.ghe/repair-workspaces/
+.ghe/watched_repositories.json
 .ghe/memory/decisions.yml
 .ghe/history/
 # Never commit live tokens, even in test fixtures.
