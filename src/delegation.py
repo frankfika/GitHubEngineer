@@ -15,6 +15,8 @@ from typing import Literal, Protocol, Sequence
 
 from pydantic import BaseModel, Field, field_validator
 
+from .process_runtime import safe_subprocess_env
+
 
 AdapterName = Literal["codex", "claude-code", "generic-cli"]
 
@@ -276,6 +278,7 @@ def execute_delegation(
         process = subprocess.Popen(
             command,
             cwd=repo,
+            env=safe_subprocess_env("delegate"),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

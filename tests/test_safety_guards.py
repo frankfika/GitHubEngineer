@@ -9,6 +9,7 @@ write path refuses to touch a parent directory it cannot write to.
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -22,6 +23,7 @@ import yaml
 
 from src.analyzer import AnalyzerError, IssueAnalyzer
 from src.main import _safe_local_directory, _safe_relative_path, main
+from src.process_runtime import atomic_write_json, safe_subprocess_env
 from src.models import IssueMetrics
 
 
@@ -246,6 +248,88 @@ class SafeRelativePathTest(unittest.TestCase):
             base = Path(tmp)
             with self.assertRaises(ValueError):
                 _safe_relative_path("/etc/passwd", base)
+
+
+class SafeSubprocessEnvTest(unittest.TestCase):
+    """Round 6 P0: the subprocess boundary must not leak tokens to children.
+
+    A coding agent running under ``--permission-mode acceptEdits`` is
+    a privileged actor inside its own workspace; the moment it can see
+    ``GITHUB_TOKEN`` or ``LLM_API_KEY`` from the parent process it can
+    push to repos or invoke the LLM as the user.
+    """
+
+    def test_delegate_policy_strips_tokens(self):
+        with patch.dict(
+            os.environ,
+            {
+                "PATH": "/usr/bin",
+                "GITHUB_TOKEN": "ghp_leak",
+                "LLM_API_KEY": "sk-leak",
+                "ANTHROPIC_API_KEY": "sk-ant-leak",
+                "HOME": "/home/x",
+            },
+            clear=False,
+        ):
+            env = safe_subprocess_env("delegate")
+            self.assertEqual(env.get("PATH"), "/usr/bin")
+            self.assertEqual(env.get("HOME"), "/home/x")
+            self.assertNotIn("GITHUB_TOKEN", env)
+            self.assertNotIn("LLM_API_KEY", env)
+            self.assertNotIn("ANTHROPIC_API_KEY", env)
+
+    def test_gh_policy_keeps_github_token(self):
+        with patch.dict(
+            os.environ,
+            {"PATH": "/usr/bin", "GITHUB_TOKEN": "ghp_keep", "LLM_API_KEY": "sk-leak"},
+            clear=False,
+        ):
+            env = safe_subprocess_env("gh")
+            self.assertEqual(env.get("GITHUB_TOKEN"), "ghp_keep")
+            self.assertNotIn("LLM_API_KEY", env)
+
+    def test_worker_policy_keeps_model_key_strips_github_token(self):
+        with patch.dict(
+            os.environ,
+            {
+                "PATH": "/usr/bin",
+                "GITHUB_TOKEN": "ghp_leak",
+                "ANTHROPIC_API_KEY": "sk-ant-keep",
+            },
+            clear=False,
+        ):
+            env = safe_subprocess_env("worker")
+            self.assertNotIn("GITHUB_TOKEN", env)
+            self.assertEqual(env.get("ANTHROPIC_API_KEY"), "sk-ant-keep")
+
+
+class AtomicWriteJsonTest(unittest.TestCase):
+    """Round 6 P0: a partial write must not leave a half-formed job file.
+
+    The repair worker and the HTTP handler can race to update the same
+    ``.ghe/repair-jobs/<id>.json``; a non-atomic write can produce a
+    truncated file that the next ``json.loads`` call cannot parse.
+    """
+
+    def test_atomic_write_produces_valid_json(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "job.json"
+            atomic_write_json(path, {"status": "queued", "id": "abc"})
+            self.assertTrue(path.is_file())
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["id"], "abc")
+
+    def test_atomic_write_no_leftover_tmp_on_success(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "job.json"
+            atomic_write_json(path, {"k": "v"})
+            self.assertFalse(path.with_suffix(".json.tmp").exists())
+
+    def test_atomic_write_replaces_existing_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "job.json"
+            atomic_write_json(path, {"v": 1})
+            atomic_write_json(path, {"v": 2})
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["v"], 2)
 
 
 if __name__ == "__main__":

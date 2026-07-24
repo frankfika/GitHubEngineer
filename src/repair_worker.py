@@ -9,19 +9,26 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .process_runtime import atomic_write_json, safe_subprocess_env
+
+# All subprocesses we spawn inherit a narrowed environment. The worker
+# itself runs as a child of the HTTP server, so it must not see the
+# server's LLM_API_KEY / GITHUB_TOKEN. The ``worker`` policy keeps only
+# the model key the coding agent needs.
+_WORKER_ENV = safe_subprocess_env("worker")
+
+
 def _write_job(path: Path, job: dict[str, object], **changes: object) -> None:
     job.update(changes)
     job["updated_at"] = datetime.now(timezone.utc).isoformat()
-    path.write_text(
-        json.dumps(job, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    atomic_write_json(path, job)
 
 
 def _run(arguments: list[str], *, cwd: Path, check: bool = True) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(
         arguments,
         cwd=cwd,
+        env=_WORKER_ENV,
         text=True,
         capture_output=True,
         timeout=1_800,
@@ -55,7 +62,7 @@ def _agent_pass(
             "acceptEdits",
             "--no-session-persistence",
             "--allowedTools",
-            "Read,Edit,Write,Glob,Grep,Bash",
+            "Read,Edit,Write,Glob,Grep",
         ],
         cwd=workspace,
     )
@@ -157,6 +164,15 @@ def run_repair_job(job_path: str | Path, *, mode: str = "start") -> None:
     issue_number = int(job["issue_number"])
     workspace = Path(str(job["workspace"])).resolve()
     branch = str(job.get("branch") or f"ghe/issue-{issue_number}-{str(job['id'])[:6]}")
+    # Refuse to proceed when there is no authenticated viewer. Publishing
+    # a fork-pr against an empty head owner ("/repo") produces a malformed
+    # command that ``gh`` silently truncates. Better to fail fast here.
+    viewer = str(job.get("viewer") or "")
+    if not viewer:
+        raise RuntimeError(
+            "No authenticated viewer recorded on the job; "
+            "recreate the repair from the UI so gh auth status is captured."
+        )
 
     try:
         if mode == "publish":

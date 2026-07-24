@@ -18,6 +18,7 @@ from .delegation import (
     GenericCLIAdapter,
     execute_delegation,
 )
+from .process_runtime import atomic_write_json, safe_subprocess_env
 from .github_client import GitHubClient, GitHubClientError
 from .history import (
     HistoryError,
@@ -891,6 +892,7 @@ def serve(args: argparse.Namespace) -> int:
                         text=True,
                         timeout=10,
                         shell=False,
+                        env=safe_subprocess_env("gh"),
                     ).returncode
                     == 0
                 )
@@ -1244,10 +1246,7 @@ Issue：[#{issue_number} — {issue["title"]}]({issue["url"]})
             "created_at": datetime.now(timezone.utc).isoformat(),
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
-        job_path.write_text(
-            json.dumps(job, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
+        atomic_write_json(job_path, job)
         launch_error = _launch_repair_worker(job_path, "start")
         if launch_error:
             return (
@@ -1301,8 +1300,9 @@ Issue：[#{issue_number} — {issue["title"]}]({issue["url"]})
 
         log_path = job_path.with_suffix(".log")
         log_stream = log_path.open("a", encoding="utf-8")
+        process: subprocess.Popen[str] | None = None
         try:
-            subprocess.Popen(
+            process = subprocess.Popen(
                 [
                     sys.executable,
                     "-m",
@@ -1311,6 +1311,7 @@ Issue：[#{issue_number} — {issue["title"]}]({issue["url"]})
                     mode,
                 ],
                 cwd=Path.cwd(),
+                env=safe_subprocess_env("worker"),
                 stdout=log_stream,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -1320,7 +1321,21 @@ Issue：[#{issue_number} — {issue["title"]}]({issue["url"]})
         except OSError as exc:
             log_stream.close()
             return f"Could not start repair worker: {exc}"
-        log_stream.close()
+        finally:
+            log_stream.close()
+        # Reap the worker so it does not become a zombie / defunct process.
+        # We do not block here (the worker can run for hours) — we just
+        # register a thread that calls waitpid once the worker exits.
+        if process is not None:
+            import threading
+
+            def _reap() -> None:
+                try:
+                    process.wait()
+                except OSError:
+                    pass
+
+            threading.Thread(target=_reap, daemon=True, name=f"ghe-reap-{process.pid}").start()
         return ""
 
     def handle_repair_action(
@@ -1394,18 +1409,12 @@ Issue：[#{issue_number} — {issue["title"]}]({issue["url"]})
         else:
             return 404, b'{"error":"unknown repair action"}', "application/json"
         job["updated_at"] = datetime.now(timezone.utc).isoformat()
-        path.write_text(
-            json.dumps(job, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
+        atomic_write_json(path, job)
         launch_error = _launch_repair_worker(path, mode)
         if launch_error:
             job["status"] = "failed"
             job["message"] = launch_error
-            path.write_text(
-                json.dumps(job, ensure_ascii=False, indent=2) + "\n",
-                encoding="utf-8",
-            )
+            atomic_write_json(path, job)
             return 503, json.dumps({"error": launch_error}).encode("utf-8"), "application/json"
         safe = {
             key: value
