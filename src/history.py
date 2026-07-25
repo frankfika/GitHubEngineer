@@ -51,7 +51,7 @@ class TrendDiff(BaseModel):
                 f"No prior baseline for this repository. "
                 f"This brief covers {current_count} candidate issues for the first time."
             )
-        prior_date = self.prior_generated_at.strftime("%Y-%m-%d")
+        prior_date = self.prior_generated_at.isoformat()
         parts: list[str] = [f"Compared with the {prior_date} brief:"]
         if self.new_issue_numbers:
             parts.append(
@@ -133,6 +133,68 @@ def load_latest(directory: str | Path, repo_full_name: str) -> HistoryRecord | N
         except (TypeError, ValueError):
             continue
     return None
+
+
+def aggregate_window(
+    directory: str | Path, repo_full_name: str, *, days: int
+) -> dict[str, object]:
+    """Aggregate the last ``days`` of history records for one repository.
+
+    Returns a shape ready for a trend chart: per-day counts of
+    ``new_issues``, ``top_issues`` (sum across snapshots), and the
+    list of clusters seen in the window. Corrupt or partial records
+    are skipped silently — the trend endpoint is best-effort and
+    should never raise.
+    """
+
+    from datetime import datetime, timedelta, timezone
+
+    base = Path(directory)
+    if not base.exists():
+        return {
+            "repo": repo_full_name,
+            "range_days": days,
+            "days": [],
+            "total_runs": 0,
+            "new_issues": 0,
+            "clusters": [],
+        }
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    records: list[HistoryRecord] = []
+    for path in base.glob("*__*.json"):
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            record = HistoryRecord(**raw)
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            continue
+        if record.repo_full_name != repo_full_name:
+            continue
+        if record.generated_at and record.generated_at < cutoff:
+            continue
+        records.append(record)
+    records.sort(key=lambda record: record.generated_at)
+    by_day: dict[str, dict[str, int]] = {}
+    seen_clusters: set[str] = set()
+    for record in records:
+        day = record.generated_at.date().isoformat() if record.generated_at else "unknown"
+        bucket = by_day.setdefault(
+            day, {"new_issues": 0, "top_issues": 0, "runs": 0}
+        )
+        bucket["new_issues"] += record.new_issues_count
+        bucket["top_issues"] += len(record.top_issue_numbers)
+        bucket["runs"] += 1
+        seen_clusters.update(record.cluster_names)
+    days_list = [
+        {"date": day, **counts} for day, counts in sorted(by_day.items())
+    ]
+    return {
+        "repo": repo_full_name,
+        "range_days": days,
+        "days": days_list,
+        "total_runs": len(records),
+        "new_issues": sum(item["new_issues"] for item in days_list),
+        "clusters": sorted(seen_clusters),
+    }
 
 
 def compute_diff(prior: HistoryRecord, current: HistoryRecord) -> TrendDiff:

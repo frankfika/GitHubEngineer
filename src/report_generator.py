@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import timezone
+
 from .models import MaintainerBrief, IssuePriority
 
 
@@ -7,11 +9,14 @@ class ReportGenerator:
     """Render MaintainerBrief as Markdown."""
 
     def generate_markdown(self, brief: MaintainerBrief, repo_name: str) -> str:
+        generated_at = brief.generated_at
+        if generated_at.tzinfo is None:
+            generated_at = generated_at.replace(tzinfo=timezone.utc)
         lines = [
             f"# Maintainer Brief - {brief.period}",
             "",
             f"Repository: `{repo_name}`",
-            f"Generated at: `{brief.generated_at.strftime('%Y-%m-%d %H:%M UTC')}`",
+            f"Generated at: `{generated_at.isoformat()}`",
             "",
             "## Overview",
             "",

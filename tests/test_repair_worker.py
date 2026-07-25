@@ -2,7 +2,7 @@ import json
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from src.repair_worker import _pull_request_url, run_repair_job
+from src.repair_worker import _pull_request_url, render_repair_prompt, run_repair_job
 
 
 def test_pull_request_url_extracts_created_draft_pr():
@@ -79,3 +79,19 @@ def test_external_repair_uses_isolated_agent_and_fork_pr(tmp_path):
     assert any("Keep the public API backward compatible." in argument for argument in revise_command)
     assert ["gh", "repo", "fork", "upstream/project", "--clone=false"] in calls
     assert any(arguments[:2] == ["git", "push"] and "contributor" in arguments for arguments in calls)
+
+
+def test_render_repair_prompt_uses_shared_template():
+    """Round 7 P1: the web UI, Tauri shell, and CLI all read the same
+    prompts/repair.md so a one-line tweak reaches every entry point.
+    """
+
+    prompt = render_repair_prompt(42, "acme/widgets", "fix the bug")
+    assert "#42" in prompt
+    assert "acme/widgets" in prompt
+    assert "fix the bug" in prompt
+    # The untrusted-evidence warning is the most security-critical
+    # sentence; we verify it survives the round-trip so an accidental
+    # edit cannot strip it.
+    assert "untrusted evidence" in prompt
+    assert "commit, push, create forks" in prompt

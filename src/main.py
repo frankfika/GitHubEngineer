@@ -36,6 +36,21 @@ from .task_preparer import TaskPreparer, TaskPreparationError
 from .web_ui import APP_CSS, APP_JS, render_shell
 
 
+def _iso_utc(value: datetime) -> str:
+    """Render a datetime as ISO 8601 in UTC.
+
+    Round 6 P1: every user-visible timestamp (CLI list-decisions,
+    web UI decisions, web UI briefs index, report generator header,
+    history diff) used a different format string. We now agree on
+    one shape so a script that reads two outputs can sort them
+    without bespoke parsing.
+    """
+
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).isoformat()
+
+
 def _safe_relative_path(name: str, base: Path) -> Path:
     """Resolve a user-supplied path component and ensure it stays inside ``base``.
 
@@ -98,6 +113,25 @@ def parse_args() -> argparse.Namespace:
         help="Print decision memory records and exit.",
     )
     parser.add_argument(
+        "--revoke-decision",
+        action="store",
+        default=None,
+        help=(
+            "Revoke one decision. Pass a status (accepted|rejected|deferred) "
+            "to drop every record in that status, or pass an ISO 8601 "
+            "created_at timestamp to drop a single record."
+        ),
+    )
+    parser.add_argument(
+        "--migrate-watch",
+        action="store_true",
+        help=(
+            "Move the entries of the deprecated .ghe/watched_repositories.json "
+            "into the canonical `repos:` list of .ghe/config.yml, then delete "
+            "the watched file. Idempotent."
+        ),
+    )
+    parser.add_argument(
         "--init",
         action="store_true",
         help="Write a starter .ghe/config.yml from the example template, then exit.",
@@ -139,10 +173,14 @@ def main() -> int:
     try:
         if args.record_decision:
             return record_decision(args)
+        if args.revoke_decision:
+            return revoke_decision(args)
         if args.delegate_task:
             return delegate_task(args)
         if args.list_decisions:
             return list_decisions(args)
+        if args.migrate_watch:
+            return migrate_watched_repositories(args)
         if args.init:
             return init_config()
         if args.serve:
@@ -591,10 +629,105 @@ def list_decisions(args: argparse.Namespace) -> int:
         if record.themes:
             topics.append("themes " + ", ".join(record.themes))
         scope = "; ".join(topics) or "no scope"
-        timestamp = record.created_at.strftime("%Y-%m-%d") if record.created_at else "unknown"
+        timestamp = _iso_utc(record.created_at) if record.created_at else "unknown"
         print(f"{index}. [{record.status.upper()}] {timestamp} | {scope}")
         if record.reason:
             print(f"   reason: {record.reason}")
+    return 0
+
+
+def revoke_decision(args: argparse.Namespace) -> int:
+    """Drop one or more decision records from memory.
+
+    ``--revoke-decision accepted|rejected|deferred`` drops every
+    record with that status.  A bare ISO 8601 timestamp drops the
+    record whose ``created_at`` matches.  Anything else is rejected
+    with a hint pointing at ``--list-decisions``.
+    """
+
+    target = (args.revoke_decision or "").strip()
+    if not target:
+        print("error: --revoke-decision needs a status or timestamp", file=sys.stderr)
+        return 2
+    memory = DecisionMemory.load(args.memory_path)
+    if target in {"accepted", "rejected", "deferred"}:
+        removed = memory.revoke_decision(target)
+    else:
+        try:
+            target_dt = datetime.fromisoformat(target)
+        except ValueError:
+            print(
+                f"error: {target!r} is neither a decision status nor an ISO 8601 timestamp; "
+                "see `ghe --list-decisions` for the recorded values.",
+                file=sys.stderr,
+            )
+            return 2
+        removed = memory.revoke_decision(
+            lambda record, target_dt=target_dt: bool(
+                record.created_at
+                and abs((record.created_at - target_dt).total_seconds()) < 1.0
+            )
+        )
+    if not removed:
+        print(f"no decision matched {target!r}; nothing changed at {memory.path}.", file=sys.stderr)
+        return 1
+    print(f"revoked decision(s) matching {target!r}; memory saved to {memory.path}.")
+    return 0
+
+
+def migrate_watched_repositories(args: argparse.Namespace) -> int:
+    """Move watched_repositories.json entries into config.yml's `repos:` list.
+
+    The watched file is deprecated; the canonical list now lives in
+    ``.ghe/config.yml`` under the top-level ``repos:`` key.  This
+    command performs the one-shot migration: read the watched list,
+    merge with any existing ``repos:`` in the config, write the
+    config back, then delete the watched file.  Idempotent: running
+    twice in a row is a no-op after the first.
+    """
+
+    config_path = Path(args.config) if args.config else Path(".ghe/config.yml")
+    # Derive the watched file path from the same parent directory as
+    # the config so a non-default --config still migrates the right
+    # file. Falls back to CWD-relative for the default config.
+    base_dir = config_path.parent if config_path.parent != Path("") else Path(".ghe")
+    watched_path = base_dir / "watched_repositories.json"
+    if not watched_path.exists():
+        print(f"nothing to migrate: {watched_path} does not exist.", file=sys.stderr)
+        return 0
+    try:
+        watched = json.loads(watched_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"error: could not read {watched_path}: {exc}", file=sys.stderr)
+        return 1
+    if not isinstance(watched, list):
+        print(f"error: {watched_path} does not contain a JSON list.", file=sys.stderr)
+        return 1
+    try:
+        import yaml
+    except ImportError:
+        print("error: PyYAML is required for --migrate-watch.", file=sys.stderr)
+        return 1
+    config: dict = {}
+    if config_path.exists():
+        try:
+            config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        except (OSError, yaml.YAMLError) as exc:
+            print(f"error: could not read {config_path}: {exc}", file=sys.stderr)
+            return 1
+    existing_repos = config.get("repos") or []
+    if not isinstance(existing_repos, list):
+        existing_repos = [existing_repos] if existing_repos else []
+    merged = list(dict.fromkeys([*existing_repos, *(str(item) for item in watched)]))
+    config["repos"] = merged
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        yaml.safe_dump(config, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    if watched_path.exists():
+        watched_path.unlink()
+    print(f"migrated {len(watched)} repos into {config_path}; removed {watched_path}.")
     return 0
 
 
@@ -1526,6 +1659,49 @@ Issue：[#{issue_number} — {issue["title"]}]({issue["url"]})
         }
         return 202, json.dumps(safe, ensure_ascii=False).encode("utf-8"), "application/json"
 
+    def render_trend_summary(query: dict[str, list[str]]) -> tuple[int, bytes, str]:
+        """Aggregate the last ``range`` days of history for a repo.
+
+        Wired to ``GET /api/briefs/trend?range=7d&repo=owner/name``.
+        The response shape is the same ``aggregate_window`` returns
+        — a per-day bucket of ``new_issues`` / ``top_issues`` /
+        ``runs`` plus the list of clusters seen in the window.
+        Corrupt history records are skipped silently; an empty
+        window returns an empty ``days: []`` rather than 404.
+        """
+
+        from .history import aggregate_window
+
+        raw_range = (query.get("range", ["7d"])[0] or "7d").strip().lower()
+        range_days = 7
+        if raw_range.endswith("d") and raw_range[:-1].isdigit():
+            candidate = int(raw_range[:-1])
+            if 1 <= candidate <= 365:
+                range_days = candidate
+        elif raw_range.isdigit():
+            candidate = int(raw_range)
+            if 1 <= candidate <= 365:
+                range_days = candidate
+        repo_full_name = (query.get("repo", [""])[0] or "").strip()
+        if not repo_full_name:
+            # Fall back to the first tracked repo so the URL works
+            # without parameters when the user is only watching one
+            # repository.
+            if repos:
+                repo_full_name = repos[0]
+            else:
+                return (
+                    400,
+                    b'{"error":"repo query param is required when multiple repos are tracked"}',
+                    "application/json",
+                )
+        if not _valid_repo_name(repo_full_name):
+            return 400, b'{"error":"invalid repository name"}', "application/json"
+        summary = aggregate_window(
+            history_dir, repo_full_name, days=range_days
+        )
+        return 200, json.dumps(summary, ensure_ascii=False).encode("utf-8"), "application/json"
+
     def render_index() -> tuple[int, bytes, str]:
         briefs: list[dict[str, str]] = []
         if output_dir.exists():
@@ -1536,9 +1712,9 @@ Issue：[#{issue_number} — {issue["title"]}]({issue["url"]})
                     {
                         "file": path.name,
                         "size_bytes": str(path.stat().st_size),
-                        "modified": datetime.fromtimestamp(
-                            path.stat().st_mtime, tz=timezone.utc
-                        ).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        "modified": _iso_utc(
+                            datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+                        ),
                     }
                 )
         body = json.dumps(
@@ -1767,9 +1943,9 @@ footer {{ max-width: 960px; margin: 64px auto 32px; padding: 0 24px;
                     {
                         "file": path.name,
                         "size_bytes": str(path.stat().st_size),
-                        "modified": datetime.fromtimestamp(
-                            path.stat().st_mtime, tz=timezone.utc
-                        ).strftime("%Y-%m-%d %H:%M UTC"),
+                        "modified": _iso_utc(
+                            datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+                        ),
                         "href": f"/ui/briefs/{quote(path.name)}",
                     }
                 )
@@ -1911,7 +2087,7 @@ footer {{ max-width: 960px; margin: 64px auto 32px; padding: 0 24px;
                         href=quote(path.name),
                         name=html.escape(path.name),
                         size=path.stat().st_size,
-                        modified=datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+                        modified=_iso_utc(datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)),
                     )
                     for path in briefs
                     if path.is_file()
@@ -1941,7 +2117,7 @@ footer {{ max-width: 960px; margin: 64px auto 32px; padding: 0 24px;
                 if record.themes:
                     topics.append("themes " + ", ".join(record.themes))
                 timestamp = (
-                    record.created_at.strftime("%Y-%m-%d %H:%M UTC")
+                    _iso_utc(record.created_at)
                     if record.created_at
                     else "—"
                 )
@@ -2005,6 +2181,53 @@ footer {{ max-width: 960px; margin: 64px auto 32px; padding: 0 24px;
         return 201, json.dumps(record.model_dump(mode="json", exclude_none=True), indent=2).encode(
             "utf-8"
         ), "application/json"
+
+    def handle_delete_decision(query: dict[str, list[str]]) -> tuple[int, bytes, str]:
+        """Revoke one or more decisions by status or by created_at timestamp.
+
+        Accepts the same two forms as the CLI subcommand: a status
+        string (drop every record in that status) or an ISO 8601
+        created_at timestamp (drop the matching record).
+        """
+
+        target = (query.get("target", [""])[0] or "").strip()
+        if not target:
+            return (
+                400,
+                b'{"error":"target query param must be a status or ISO 8601 timestamp"}',
+                "application/json",
+            )
+        memory = DecisionMemory.load(args.memory_path)
+        if target in {"accepted", "rejected", "deferred"}:
+            removed = memory.revoke_decision(target)
+        else:
+            try:
+                target_dt = datetime.fromisoformat(target)
+            except ValueError:
+                return (
+                    400,
+                    json.dumps(
+                        {"error": f"{target!r} is neither a status nor an ISO 8601 timestamp"}
+                    ).encode("utf-8"),
+                    "application/json",
+                )
+            removed = memory.revoke_decision(
+                lambda record, target_dt=target_dt: bool(
+                    record.created_at
+                    and abs((record.created_at - target_dt).total_seconds()) < 1.0
+                )
+            )
+        if not removed:
+            return (
+                404,
+                json.dumps({"error": f"no decision matched {target!r}"}).encode("utf-8"),
+                "application/json",
+            )
+        return (
+            200,
+            json.dumps({"revoked": target, "memory_path": str(memory.path)}).encode("utf-8"),
+            "application/json",
+        )
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format: str, *args) -> None:  # noqa: A002
@@ -2103,6 +2326,8 @@ footer {{ max-width: 960px; margin: 64px auto 32px; padding: 0 24px;
                 status, body, content_type = render_owned_repository_choices()
             elif path == "/api/repair-capabilities":
                 status, body, content_type = render_repair_capabilities()
+            elif path == "/api/briefs/trend" or path.startswith("/api/briefs/trend?"):
+                status, body, content_type = render_trend_summary(parse_qs(parsed.query))
             elif path == "/api/repairs":
                 status, body, content_type = render_repair_jobs()
             elif path.startswith("/api/repairs/") and path.endswith("/confirm-token"):
@@ -2224,6 +2449,29 @@ footer {{ max-width: 960px; margin: 64px auto 32px; padding: 0 24px;
                     else:
                         normalised[key] = [str(value)]
                 status, body, content_type = handle_post_decision(normalised)
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_DELETE(self) -> None:  # noqa: N802
+            """Revoke a decision by status or created_at timestamp.
+
+            Wired to ``DELETE /decisions?target=<status-or-ISO8601>``.
+            Round 7 P1: gives the web UI and CLI a single shape for
+            the "I changed my mind" button.
+            """
+
+            parsed = urlparse(self.path)
+            path = parsed.path.rstrip("/") or "/"
+            if path != "/decisions":
+                self._send_json(404, b'{"error":"not found"}')
+                return
+            if not self._request_is_authorized():
+                self._send_json(403, b'{"error":"forbidden: loopback or same-origin required"}')
+                return
+            status, body, content_type = handle_delete_decision(parse_qs(parsed.query))
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))

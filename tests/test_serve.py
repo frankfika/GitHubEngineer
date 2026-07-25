@@ -302,6 +302,85 @@ class ServeSubcommandTest(unittest.TestCase):
             json.dumps(job), encoding="utf-8"
         )
 
+    def test_briefs_modified_field_uses_iso_8601_with_offset(self):
+        """Round 7 regression: the /briefs JSON and /ui/briefs HTML
+        both render the brief's mtime through _iso_utc() so a
+        downstream script can sort them without bespoke parsing.
+        """
+
+        import re
+
+        status, _, body = _http_get(self.port, "/")
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        modified = payload["briefs"][0]["modified"]
+        # ISO 8601 with timezone offset (e.g. "2026-07-21T..." + 00:00),
+        # not the old "YYYY-MM-DD HH:MM UTC" shape, and not the Z suffix.
+        self.assertRegex(
+            modified,
+            r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?\+00:00$",
+        )
+
+    def test_briefs_trend_endpoint_aggregates_history(self):
+        """Round 7 P1: /api/briefs/trend?range=Nd returns per-day buckets."""
+
+        import json as _json
+        from datetime import datetime, timezone, timedelta
+
+        # Seed a single history record so the endpoint has something
+        # to aggregate. The test config is set up in setUpClass().
+        history_dir = self.directory / ".ghe" / "history"
+        history_dir.mkdir(parents=True, exist_ok=True)
+        now = datetime.now(timezone.utc)
+        record = {
+            "repo_full_name": "acme/widgets",
+            "generated_at": now.isoformat(),
+            "top_issue_numbers": [1, 2, 3],
+            "top_issue_scores": {"1": 5.0, "2": 4.0, "3": 3.0},
+            "cluster_names": ["auth", "performance"],
+            "new_issues_count": 7,
+        }
+        (history_dir / f"{now.strftime('%Y-%m-%d_%H%M%S')}__{('acme', 'widgets')}.json".replace("('", "").replace("')", "").replace("', '", "__")).write_text(
+            _json.dumps(record), encoding="utf-8"
+        )
+        status, _, body = _http_get(self.port, "/api/briefs/trend?range=7d")
+        self.assertEqual(status, 200)
+        payload = _json.loads(body)
+        self.assertEqual(payload["repo"], "acme/widgets")
+        self.assertEqual(payload["range_days"], 7)
+        self.assertGreaterEqual(payload["total_runs"], 1)
+        self.assertIn("auth", payload["clusters"])
+        self.assertIn("performance", payload["clusters"])
+
+    def test_delete_decision_by_status(self):
+        """Round 7 P1: the web UI can revoke decisions via DELETE /decisions."""
+
+        import urllib.request
+
+        # Seed a decision.
+        payload = json.dumps(
+            {"status": "rejected", "theme": "temp", "reason": "tmp"}
+        ).encode("utf-8")
+        status, _, body = _http_post(
+            self.port, "/decisions", payload, "application/json"
+        )
+        self.assertEqual(status, 201)
+        # DELETE by status.
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/decisions?target=rejected",
+            method="DELETE",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=5) as response:
+                status = response.status
+                body = response.read()
+        except urllib.error.HTTPError as exc:
+            status = exc.code
+            body = exc.read()
+            print(f"DELETE failed: status={status} body={body!r}")  # debug
+        self.assertEqual(status, 200, f"DELETE returned {status}: {body!r}")
+        self.assertIn(b"rejected", body)
+
     def test_publish_wrong_confirm_token_rejected(self):
         """Round 6 P0 follow-up: getting a token and sending a different
         one must still be refused.

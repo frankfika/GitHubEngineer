@@ -4,23 +4,22 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>GitHub Engineer</title>
-  <style>
-    :root { color-scheme: light dark; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
-    body { min-height: 100vh; display: grid; place-items: center; margin: 0; background: #f4f4f1; color: #171816; }
-    main { width: min(420px, calc(100% - 40px)); padding: 28px; border: 1px solid rgba(0,0,0,.1); border-radius: 18px; background: white; }
-    h1 { margin: 0 0 8px; font-size: 22px; }
-    p { margin: 0; color: #666; line-height: 1.6; }
-    @media (prefers-color-scheme: dark) {
-      body { background: #111310; color: #f3f4ef; }
-      main { background: #1d1f1c; border-color: rgba(255,255,255,.1); }
-      p { color: #b5b9af; }
-    }
-  </style>
+  <link rel="stylesheet" href="/ui/app.css">
 </head>
 <body>
-  <main>
-    <h1>GitHub Engineer</h1>
-    <p>桌面服务尚未连接。请从项目目录运行 <code>npm run desktop</code>。</p>
-  </main>
+  <div id="app">
+    <header class="ghe-header">
+      <h1>GitHub Engineer</h1>
+      <nav class="ghe-nav">
+        <a href="/" data-route="home">Home</a>
+        <a href="/briefs" data-route="briefs">Briefs</a>
+        <a href="/decisions" data-route="decisions">Decisions</a>
+      </nav>
+    </header>
+    <main class="ghe-main">
+      <p>请从项目目录运行 <code>ghe --serve</code>，或通过桌面壳启动以激活完整功能。</p>
+    </main>
+  </div>
+  <script src="/ui/app.js" defer></script>
 </body>
 </html>
