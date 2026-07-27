@@ -30,6 +30,7 @@ def _make_issue(number: int, *, is_pr: bool = False, days_ago: int = 0):
         assignees=[],
         state="open",
         html_url=f"https://github.com/acme/widgets/issues/{number}",
+        _rawData={"pull_request": {}} if is_pr else {},
         pull_request=SimpleNamespace() if is_pr else None,
         get_reactions=MagicMock(return_value=SimpleNamespace(totalCount=5)),
     )
@@ -85,6 +86,57 @@ def test_get_open_issues_caps_pages_to_protect_large_repositories():
         client = GitHubClient("token", "acme/widgets")
         result = client.get_open_issues(max_pages=1)
     assert len(result) == 1
+
+
+def test_get_open_issues_stops_after_empty_page():
+    """A real PyGithub paginator returns [] after its final page."""
+
+    class _Paginator:
+        def __init__(self):
+            self.requested_pages = []
+
+        def get_page(self, page_index):
+            self.requested_pages.append(page_index)
+            if page_index == 0:
+                return [_make_issue(1)]
+            if page_index == 1:
+                return []
+            raise AssertionError("pagination continued after an empty page")
+
+    paginator = _Paginator()
+    repo = SimpleNamespace(get_issues=MagicMock(return_value=paginator))
+    with patch("src.github_client.Github") as gh_cls:
+        gh_cls.return_value.get_repo.return_value = repo
+        client = GitHubClient("token", "acme/widgets")
+        result = client.get_open_issues(max_pages=10)
+    assert [issue.number for issue in result] == [1]
+    assert paginator.requested_pages == [0, 1]
+
+
+def test_get_open_issues_does_not_lazy_load_each_issue_to_filter_prs():
+    """Filtering list results must not access PyGithub's lazy PR property."""
+
+    class _LazyIssue:
+        def __init__(self, number, *, is_pr=False):
+            base = _make_issue(number, is_pr=is_pr)
+            self.__dict__.update(base.__dict__)
+            self._pull_request_accessed = False
+
+        @property
+        def pull_request(self):
+            self._pull_request_accessed = True
+            raise AssertionError("pull_request triggered a detail request")
+
+    issue = _LazyIssue(1)
+    pull_request = _LazyIssue(2, is_pr=True)
+    repo = _make_repo([issue, pull_request])
+    with patch("src.github_client.Github") as gh_cls:
+        gh_cls.return_value.get_repo.return_value = repo
+        client = GitHubClient("token", "acme/widgets")
+        result = client.get_open_issues()
+    assert [item.number for item in result] == [1]
+    assert issue._pull_request_accessed is False
+    assert pull_request._pull_request_accessed is False
 
 
 def test_get_issue_metrics_handles_reaction_failure():

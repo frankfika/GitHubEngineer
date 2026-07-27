@@ -150,8 +150,22 @@ class GitHubClient:
                 except IndexError:
                     # Past the last page.
                     break
+                if not page:
+                    # PyGithub returns an empty list (rather than IndexError)
+                    # for pages beyond the end on real GitHub responses.
+                    break
                 for issue in page:
-                    if issue.pull_request:
+                    # The list endpoint omits ``pull_request`` for regular
+                    # issues. Accessing ``issue.pull_request`` in that case
+                    # makes PyGithub lazily fetch every issue detail, turning
+                    # one page request into an N+1 sequence. Inspect the
+                    # already-received list payload instead.
+                    raw_data = getattr(issue, "_rawData", None)
+                    if (
+                        "pull_request" in raw_data
+                        if isinstance(raw_data, dict)
+                        else bool(issue.pull_request)
+                    ):
                         continue
                     updated_at = issue.updated_at
                     if updated_at.tzinfo is None:
