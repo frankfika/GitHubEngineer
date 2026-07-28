@@ -191,7 +191,7 @@ The engine is a four-stage pipeline. Each stage is a separate module with a one-
 ### What you need on hand
 
 - **Python 3.11+** (3.11, 3.12, 3.13 are tested in CI on Ubuntu and macOS).
-- **A GitHub token** that can read issues. Public repos work without one, but a token raises the rate limit from 60/hr to 5 000/hr — well worth it on Monday mornings.
+- **GitHub login is optional for public repositories.** Anonymous mode can add and read any public repository. Connect one GitHub account only when you need private repositories, the “My repositories” picker, Issue creation, Forks, or pull requests.
 - **An OpenAI-compatible API key.** OpenAI, Azure OpenAI, Anthropic-via-proxy, Ollama, LiteLLM, vLLM, all work. See the [Configuration](#configuration) section for `LLM_BASE_URL`.
 
 ### Install
@@ -221,13 +221,29 @@ cp .ghe/config.example.yml .ghe/config.yml
 `ghe --init` is idempotent: it won't clobber an existing config. Edit the resulting `.ghe/config.yml` to point at your repo, then set the environment variables.
 
 ```bash
-export GITHUB_TOKEN="github_token"     # optional for public repositories
+# Recommended desktop login: one account login, reused for every repository.
+gh auth login --web --git-protocol https
+
+# Alternative for servers/CI (optional for public repositories):
+export GITHUB_TOKEN="github_token"
 export LLM_API_KEY="model_api_key"
 export LLM_MODEL="gpt-4o-mini"         # default
 export LLM_BASE_URL=""                  # leave empty for the OpenAI default endpoint
 ```
 
 `LLM_BASE_URL` is required only when you're pointing at something other than OpenAI. Every `${VAR}` placeholder in `.ghe/config.yml` is expanded from the environment at load time.
+
+GitHub access is capability-based, not repository-login-based:
+
+| Action | Login needed? | Must own the repository? |
+|---|---:|---:|
+| Add/read a public repository and view Issue status | No | No |
+| Read a private repository / list “My repositories” | Yes, once per GitHub account | No, read access is enough |
+| Create an Issue | Yes, once per GitHub account | No, when the repository enables Issues |
+| Contribute a fix to an external repository | Yes, once per GitHub account | No, GitHub Engineer uses your Fork and opens a PR |
+| Push directly to your own repository | Yes, once per GitHub account | Yes, or equivalent write permission |
+
+The desktop app also includes this guide under the account label in the repository toolbar. GitHub CLI stores the credential in the system keychain; you do not log in again for every repository.
 
 ### Run
 
@@ -323,9 +339,15 @@ cargo install tauri-cli --version 2.11.4 --locked
 The desktop shell is configured by [`src-tauri/tauri.conf.json`](src-tauri/tauri.conf.json):
 
 - `beforeDevCommand`: starts the Python service on `127.0.0.1:8765` (`ghe --serve`).
+- `beforeBuildCommand`: builds the Python service as a target-specific PyInstaller sidecar.
 - `devUrl`: points the WebView at `http://127.0.0.1:8765/ui/`.
 - `frontendDist`: serves the conversation UI from `../desktop`.
 - `security.csp`: locks scripts to `'self'`; only `127.0.0.1:8765` is allowlisted for `connect-src`.
+
+Release bundles include and start that sidecar automatically. The service stores
+desktop configuration and local job state under the application data directory,
+and is terminated when the desktop window exits; users do not need to run
+`ghe --serve` separately.
 
 Codex Desktop exposes the same `./script/build_and_run.sh` as the project **Run** action via [`.codex/environments/environment.toml`](.codex/environments/environment.toml). The web UI screenshots above are exactly what you see in the Tauri WebView — the only thing the native shell adds is the title bar.
 
@@ -671,8 +693,9 @@ Yes. Run `ghe --serve` and open `http://127.0.0.1:8765/ui/`. See the [Local web 
 - **"Could not parse LLM JSON"**: the model returned prose. Try a model with stronger JSON instruction following, or lower `analysis.max_issues_for_llm` so the prompt is shorter and easier to follow.
 - **"GitHub API rate limit exceeded"**: supply a `GITHUB_TOKEN` (free tier raises the limit from 60/hr to 5 000/hr) or wait for the reset.
 - **"Could not access repository"**: verify the repository `owner/name` and that `GITHUB_TOKEN` has read access.
-- **"Failed to fetch issues"**: check that the repository exists and the `GITHUB_TOKEN` has `repo` or `public_repo` scope.
-- **"I just want to look at the UI but I don't have a token"**: set `GHE_MOCK_REPOSITORIES=1` before starting the server. The sidebar, owner/monitor badges, and idle/selected states will render with no GitHub calls. You will still need a token to actually pull issues or add a repo.
+- **"Failed to fetch issues"**: first verify `owner/repository`. Public repositories fall back to anonymous access; private repositories require one account login with `gh auth login --web --git-protocol https`.
+- **"GitHub login is required" even though `gh auth status` succeeds**: restart GitHub Engineer after upgrading. Desktop launches now discover Homebrew's `/opt/homebrew/bin/gh` even when the GUI process has a minimal macOS `PATH`.
+- **"I just want to inspect a public repository without a token"**: paste its GitHub URL in “+ Add repository”. No login or mock mode is required. Anonymous GitHub API limits are lower, so connect an account if you monitor many repositories.
 - **Empty `## Top Priorities`**: the lookback window is too narrow, or every issue is filtered by `decision_memory` (rejected themes). Run `ghe --list-decisions` to inspect.
 - **Brief includes a `--prepare-issue <N>` error**: issue N is not in the current brief's Top N. Re-run the brief first, then call `--prepare-issue` with one of the recommended numbers.
 - **Desktop app says `Timed out waiting for github-engineer-desktop`**: the WebView is not connecting to `127.0.0.1:8765`. Check `lsof -iTCP:8765 -sTCP:LISTEN` and inspect `.codex/run/desktop.log`. See [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md) for expanded recipes.
@@ -712,3 +735,300 @@ For more, see [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md) and [`VERIFY.md`](VERIF
 ## License
 
 [MIT](LICENSE) — Copyright (c) 2026 GitHub Engineer contributors.
+
+---
+
+## §A. Automatic repair (3 modes, `repair-capabilities` endpoint)
+
+The web UI and Tauri shell both expose an end-to-end **automatic repair** flow on top of the brief. The capabilities endpoint (`GET /api/repair-capabilities`) inspects the current viewer, the target repository, and the local authentication state, then chooses one of three modes. Each mode maps to a permission pill and a CTA copy — no hidden "must upgrade" framing.
+
+### A.1 Three modes
+
+| Mode | Triggers | What you can do | Where artefacts land |
+| --- | --- | --- | --- |
+| **Owner (完整模式)** | The viewing user owns the repo *and* has both `gh auth` and `claude auth` | Edit in an isolated worktree, run tests, review a per-hunk diff, create a **Draft PR** directly on the source repo | Source repo (as a Draft PR) |
+| **Fork (Fork 模式)** | The repo is external *and* `gh auth` + `claude auth` are both set | Edit inside the viewer's own fork, run tests, review a per-hunk diff, open a PR against the original repo via the fork | The viewer's fork, then upstream via PR |
+| **Anonymous (匿名模式)** | The repo is public and the viewer has at least `claude auth` (no `gh` required) | Browse issues, clone the public repo, run Claude Code, review a per-hunk diff; **no outbound writes** | `~/.githubengineer/repos/<owner>/<repo>/<issue#>/` on the viewer's machine |
+
+### A.2 Permission pill copy (one colour per mode)
+
+The pill sits next to the mode badge in the repository header. The copy comes verbatim from `desktop/ui/app.js`; the three screenshots referenced below are taken from the local verifier (see `docs/screenshots/verifier/`):
+
+- **Owner** → `我的仓库 · 可直接提交修复草稿` (verifier screenshot: `verifier/owner.png`)
+- **Fork + auth** → `外部仓库 · 可通过你的副本提交修复` (verifier screenshot: `verifier/fork_auth.png`)
+- **Anonymous** → `公开仓库 · 可直接查看（连接 GitHub 后可提 Issue / Fork / PR）` (verifier screenshot: `verifier/anon.png`)
+
+Each pill is a plain badge, not a CTA — it tells you what is and isn't possible in the current mode.
+
+### A.3 Entry CTA, four variants
+
+The CTA on every issue row is one of four variants, decided by `currentCanModify × currentGithubAuthenticated`. The choice is **the same button label, different sub-label** — the user can always press it; the consequence is what changes:
+
+| Owner? | GitHub auth? | Button label | Sub-label |
+| --- | --- | --- | --- |
+| ✅ | ✅ | 在隔离目录开始修复 | 完成后可一键提 PR |
+| ✅ | ❌ | 在隔离目录开始修复 | 产物留本地 · 连接后可提 PR |
+| ❌ | ✅ | 在你的 Fork 开始修复 | 完成后可提 PR |
+| ❌ | ❌ | 在隔离目录开始修复 | 产物留本地 |
+
+Anonymous mode never shows a sub-label that says "提 PR" — it is honest about what won't happen.
+
+### A.4 Repair results, five steps
+
+The review-state in the inspector is a fixed 5-step pipeline. The diff view (§D) opens automatically once step 4 begins, *without closing the inspector*:
+
+1. **Clone** — public repos skip OAuth entirely; private repos use the cached `gh` credential.
+2. **Edit** — Claude Code runs in an isolated worktree (owner mode) or a fork clone (fork mode); no shared branch.
+3. **Test** — `pytest -q tests/` runs; pass / fail surfaces in the status bar of the inspector (no modal, no alert).
+4. **Review** — the **CodeMirror 6 diff view** (see §D) opens automatically on `review_ready`, with per-hunk Accept / Reject buttons and a sidebar of metadata (repo / issue / commit / test result).
+5. **Publish** — only **Owner (完整模式)** can create a Draft PR on the source repo. Fork mode publishes via PR from the fork. Anonymous mode leaves the artefacts in `~/.githubengineer/repos/...`.
+
+---
+
+## §B. Error diagnosis (`diagnose_repair_error`)
+
+A failed repair job produces a structured diagnosis. Seven `error_kind` values are recognised by both `src/main.py::diagnose_repair_error` and the client-side mirror in `desktop/ui/app.js::diagnoseRepairError`. Each kind renders a different colour card with a different icon, and each one offers the **next concrete step** as the primary CTA — not a generic "view log" link.
+
+| `error_kind` | Trigger pattern | UI | Next action |
+| --- | --- | --- | --- |
+| `claude_not_authenticated` | Claude Code is not logged in | 🤖 amber card | Copy `claude auth login` to clipboard |
+| `gh_not_authenticated` | `gh` CLI is not connected to GitHub | 🔗 amber card | Open the GitHub connection dialog |
+| `test_failed` | `pytest` failed after the AI edit | 🧪 red card | Toggle the `.ghe/repair-jobs/<id>.log` panel |
+| `no_diff` | AI produced no code change | 📝 grey card | Open the guidance input, adjust instructions, re-run |
+| `permission_denied` | OS-level `EACCES` on the worktree | 🔒 red card | Copy the `cd` command + suggested alternate path |
+| `timeout` | 1 800 s deadline exceeded | ⏱ amber card | Re-run with a smaller scope |
+| `unknown` | None of the patterns matched | ℹ️ grey card | View the full log; copy its path |
+
+The colour rules (warning amber / danger red / neutral grey) are stable across all seven — see `renderFailureDetail` in `desktop/ui/app.js` for the single source of truth. The backend stores the diagnosis in `job.last_error_diagnosis`; the client falls back to a regex pass over `job.message` if the field is missing.
+
+---
+
+## §C. Onboarding (first-launch)
+
+The first time a browser opens the UI on a given origin, a small **onboarding card** appears above the sidebar with three items:
+
+- **完整模式** (owner): connect both `gh` and `claude` to publish Draft PRs.
+- **Fork 模式** (external + `gh` + `claude`): edit in your fork, then open a PR.
+- **匿名模式** (public + `claude`): browse, clone, edit; artefacts stay local.
+
+The card footer always says: **匿名浏览可用 · 连接 GitHub 解锁 PR**. A *以后再说* soft button closes the card without persisting the dismissal.
+
+Once dismissed, the card is hidden via `localStorage['ghe-onboarding-seen'] = '1'`. The flag is per-origin; switching machines or GitHub accounts re-triggers onboarding (intentional — a new account may have different permissions).
+
+To re-trigger onboarding on the same origin — for example, after a permissions change — clear the key from devtools, or run in the console:
+
+```js
+localStorage.removeItem('ghe-onboarding-seen');
+location.reload();
+```
+
+---
+
+## §D. Diff view (CodeMirror 6)
+
+The diff view is the review surface for the per-hunk accept/reject flow. It opens **automatically** inside `#repair-inspector` once a job reaches `review_ready` — the inspector dialog is **not** closed, so the user keeps the conversation history visible.
+
+### D.1 Position
+
+- Mounted in `#repair-inspector` as a child panel.
+- Inspector stays open; diff is a sub-panel that pushes the conversation stream down.
+- Closed by a single *关闭* button on the diff panel; reopening requires the user to press *Review* again on a `review_ready` job.
+
+### D.2 Features
+
+- **Top metadata bar** — repo, issue number, commit SHA, last test result.
+- **Single-column unified diff** — adds / removes / context, with a 200 KB bundle (vs. Monaco's 4.5 MB, ~20× lighter).
+- **Right hunk sidebar** — one card per hunk with its own *Accept* / *Reject* button; counts update live.
+- **Keyboard**:
+  - `A` — accept all
+  - `R` — reject all
+  - `C` — open the *continue conversation* input
+  - `J` / `K` — next / previous hunk
+
+### D.3 The five prototype traps (and how we avoided them)
+
+These are lessons learned the hard way in `dist/prototypes/diff-codemirror/`. The production renderer in `desktop/ui/app.js::mountDiffEditor` keeps all five invariants:
+
+1. **importmap pins eight packages explicitly** — `@codemirror/state`, `@codemirror/view`, `@codemirror/commands`, `crelt`, `style-mod`, `w3c-keyname`, plus the two line-number packages. We do not let esm.sh decide the version for transitive deps — that's how we ended up with two `state` instances in the prototype.
+2. **DOM walk in `paintDiffLines()`, not `StateField` + line decoration** — every line in the unified diff is a plain `<div>` with a class. Scroll handler is 60 ms debounced. Line decoration + heavy scroll was the path to `findPos: range not found` crashes.
+3. **Hunk headers live in the right HTML sidebar, not as `Decoration.widget`** — putting the hunk marker inside the doc caused range recompute to clobber adjacent decorations.
+4. **No `@codemirror/lang-python`** — plain text mode is enough for diffs; pulling `@lezer/highlight` + `@lezer/common` + `@lezer/lr` triples the bundle and pins three more versions we don't need.
+5. **No `lineWrapping`** — long lines scroll horizontally. `lineWrapping` triggered a `docView` recompute that the StateField path couldn't survive.
+
+### D.4 Reference
+
+- **Prototype (kept for archaeology):** `dist/prototypes/diff-codemirror/`
+- **Production code:** `desktop/ui/app.js::mountDiffEditor` + `paintDiffLines` + `ensureDiffViewAssets`
+- **Diff data source:** `GET /api/repairs/<id>/diff` (server-side: `src/main.py`)
+
+---
+
+## §E. Smooth OAuth upgrade path
+
+The diff view and the inspector both expose a *连接 GitHub* button in their top-right. Clicking it always opens the existing `repairSetupDialog` (we never re-implement the dialog) and never closes the diff panel or clears the hunk decisions. Concretely:
+
+1. **At any time** the user can press *连接 GitHub* in the diff view's top-right.
+2. The `repairSetupDialog` is shown via `repairSetupDialog.showModal()` — the same dialog used by the issue-row CTA path, so the auth flow is identical.
+3. On a successful connection, a 6-second toast appears: **已升级到完整模式 · 之前接受的 N 个 hunk 已保留**. The number `N` is read from the diff view's local accept counter at the moment the toast fires.
+4. Hunk decisions are persisted to `job.hunk_decisions` as the user clicks — the diff view and the server-side job both keep a live record, so reloading or upgrading auth **never** discards an already-made decision.
+
+The upgrade path is one-way at the data layer: once the user is in *完整模式* (Owner), the job gains a `pr_url` once the publish step (§A.4 step 5) finishes. In Fork mode the publish step opens a PR from the fork to the original repo; in Anonymous mode there is no upgrade — the user has to start a new repair job to take advantage of the new auth state.
+
+---
+
+## §F. Coding Agent 配置 (pluggable provider abstraction)
+
+The repair worker used to hard-code `claude --bare ...` — unusable for anyone already paying for OpenAI, DeepSeek, OpenRouter, Ollama, or self-hosted vLLM. **§F** introduces a small provider protocol so the same worker can drive any of three concrete backends, selected by a single YAML key.
+
+### §F.1 Design principles
+
+- **Pluggable** — every backend implements `CodingAgentProvider` (`name()` + `run(prompt, workspace, *, on_event)` + optional `health_check()`). New providers drop in without touching `repair_worker`.
+- **Configuration-driven, not code-driven** — the active provider is chosen by `.ghe/config.yml`. No CLI flag, no environment variable to flip.
+- **Multi-provider from day one** — three concrete providers ship in `src/coding_agent.py`: `OpenAICompatibleProvider`, `AnthropicProvider`, `ClaudeCLIProvider`. The default is `openai_compatible`.
+- **No hard-coded `claude`** — `ClaudeCLIProvider` exists for backwards compatibility only. The migration target is the API providers.
+- **No new third-party deps** — HTTP goes through `urllib`. The module never pulls in `httpx` / `requests` / `openai`.
+
+### §F.2 Configuration entry points
+
+There are three ways to land a `coding_agent:` block in `.ghe/config.yml`:
+
+| Entry point | When to use it |
+| --- | --- |
+| **First-launch onboarding dialog** | The UI shows a *配置 Coding Agent* button in the very first render; clicking it opens a 5-step wizard (provider → key → model → test connection → done). The wizard calls the same backend endpoint the CLI uses. |
+| **CLI: `ghe --configure-coding-agent`** | An interactive walk-through that asks for provider name, then base_url / api_key / model, then writes `.ghe/config.yml` atomically. Use this on a headless box. |
+| **Hand-edit `.ghe/config.yml`** | When you already know what you want and you want a reproducible config (CI, dotfiles repo, etc.). The file is plain YAML — see §F.3 for the four supported shapes. |
+
+All three paths converge on the same parser in `src/coding_agent.py::get_provider(config)`. Whatever shape you choose, the worker sees a single `CodingAgentProvider` instance.
+
+### §F.3 The three providers
+
+#### §F.3.1 `openai_compatible` — default, recommended
+
+Any `POST {base_url}/chat/completions` endpoint that takes a Bearer key. Covers OpenAI, DeepSeek, OpenRouter, Ollama, vLLM, LM Studio, and every other server that follows the OpenAI Chat Completions schema. Empty `api_key` is allowed (substituted with the placeholder `not-required`) so local Ollama works without auth.
+
+```yaml
+coding_agent:
+  provider: openai_compatible
+  base_url: https://api.openai.com/v1
+  api_key: ${LLM_API_KEY}        # or literal "sk-..."
+  model: gpt-4o
+```
+
+**Per-provider URL cheat-sheet:**
+
+| Provider | `base_url` | `api_key` | Example `model` |
+| --- | --- | --- | --- |
+| **OpenAI** | `https://api.openai.com/v1` | `sk-...` | `gpt-4o`, `o1-mini`, `o3-mini` |
+| **DeepSeek** | `https://api.deepseek.com/v1` | `sk-...` | `deepseek-chat`, `deepseek-coder` |
+| **OpenRouter** | `https://openrouter.ai/api/v1` | `sk-or-...` | `anthropic/claude-sonnet-4-5`, `openai/gpt-4o` |
+| **Ollama** (local) | `http://localhost:11434/v1` | `ollama` (placeholder) | `qwen2.5-coder:32b`, `deepseek-coder-v2:16b` |
+| **vLLM** (local) | `http://localhost:8000/v1` | `not-required` | (whatever you started vLLM with) |
+| **LM Studio** (local) | `http://localhost:1234/v1` | `not-required` | (whatever you loaded) |
+
+#### §F.3.2 `anthropic` — first-party Messages API
+
+The official `POST https://api.anthropic.com/v1/messages` endpoint. Use this when you have a Claude.ai / Anthropic API key and want first-party access (better rate limits, prompt caching, no middleman).
+
+```yaml
+coding_agent:
+  provider: anthropic
+  api_key: ${ANTHROPIC_API_KEY}
+  model: claude-sonnet-4-5
+  # base_url is optional; defaults to https://api.anthropic.com/v1/messages
+```
+
+The provider uses `x-api-key: ...` + `anthropic-version: 2023-06-01` headers and reads the text out of `content[].text` blocks. Non-text blocks (tool_use, etc.) are ignored — see §F.5 for the MVP rationale.
+
+#### §F.3.3 `claude_cli` — legacy fallback
+
+Shells out to `claude --bare` (resolved via `src.process_runtime.find_desktop_executable`, which knows about `/opt/homebrew/bin` and `~/.claude/local` on macOS). Use this only when you already have Claude Code CLI authenticated and you want zero config.
+
+```yaml
+coding_agent:
+  provider: claude_cli
+  # No base_url / api_key / model needed.
+```
+
+The fallback is preserved so existing users don't break, but new users should default to `openai_compatible` — see §F.7 for the migration path.
+
+### §F.4 Self-hosting guide (local models)
+
+#### §F.4.1 Ollama (5 steps)
+
+1. `brew install ollama` (macOS) or `curl -fsSL https://ollama.com/install.sh | sh` (Linux).
+2. `ollama pull qwen2.5-coder:32b` — pick a code-tuned model. 7B-class models work for small diffs; 32B+ for non-trivial refactors.
+3. `ollama serve` (or `brew services start ollama` for autostart). Default listens on `http://localhost:11434`.
+4. Edit `.ghe/config.yml`:
+   ```yaml
+   coding_agent:
+     provider: openai_compatible
+     base_url: http://localhost:11434/v1
+     api_key: ollama                  # placeholder, Ollama ignores it
+     model: qwen2.5-coder:32b
+   ```
+5. `ghe --repair-capabilities` — `coding_agent.authenticated` should flip to `true`. If it stays `false`, check `ollama serve` logs and the firewall.
+
+#### §F.4.2 vLLM (2 steps)
+
+1. `vllm serve Qwen/Qwen2.5-Coder-32B-Instruct --port 8000` (pick any OpenAI-compatible model).
+2. Edit `.ghe/config.yml` with `base_url: http://localhost:8000/v1`, `api_key: not-required`, `model: Qwen/Qwen2.5-Coder-32B-Instruct`.
+
+#### §F.4.3 LM Studio (3 steps)
+
+1. Download LM Studio, open it, search for a code model, click *Download*.
+2. In the *Developer* tab, start the local server on port 1234.
+3. Edit `.ghe/config.yml` with `base_url: http://localhost:1234/v1`, `api_key: not-required`, `model: <whatever you loaded>`.
+
+### §F.5 Repository-aware repair and verification loop
+
+Both API providers use the same bounded repair contract:
+
+1. Build a bounded, secret-filtered repository snapshot and mark issue text, comments, test output, and repository files as untrusted data.
+2. Augment the prompt with a fixed suffix that asks the model to emit a unified diff inside a single ```diff``` fenced code block.
+3. POST to the chat completions endpoint with `stream: false`, `temperature: 0.0`.
+4. Extract the fenced block with the regex in `_extract_unified_diff()`.
+5. Run `git apply --check`; if the patch does not apply, send the exact failure back to the model for one bounded correction.
+6. Apply the patch, detect conventional tests/lint, and execute them in an already-installed, network-disabled Docker image. Trusted repositories can explicitly opt into host verification with `repair.allow_host_verification: true`.
+7. If verification fails, send the bounded failure output back to the model for one incremental correction and verify again.
+8. Persist the included context files and every verification attempt for review.
+
+The worker derives `changed_files` from `git status`, rebuilds the review diff after tests, and requires a persisted `verification.status == "passed"` at confirmation and publish time. An unverified or failed repair cannot be published. The `fake` provider is visibly labeled Demo and is also blocked from publishing at the backend.
+
+### §F.6 The 7 new `error_kind` values
+
+The diagnose layer (`src/diagnose.py::diagnose_repair_error`) maps HTTP failures + Claude CLI stderr to a stable set of `error_kind` values. The 7 *new* ones (the other 5 — `no_diff`, `permission_denied`, `timeout`, `claude_not_authenticated`, `unknown` — were already there) get a colored badge + a one-line `action` + a `hint`:
+
+| `error_kind` | Icon | Color | `action` (one-line) | When it fires |
+| --- | --- | --- | --- | --- |
+| `api_key_invalid` | 🔑 | red | API key 无效，更新 `.ghe/config.yml` 的 `api_key` | HTTP 401/403, body says `invalid_api_key` / `incorrect api key` |
+| `api_connection_failed` | 🔌 | red | API 不可达，检查 `base_url` + 网络 | Connection refused / DNS failure / HTTP 5xx after the body classifier falls through |
+| `model_not_found` | 📝 | red | model 名错，看 provider 文档 | HTTP 404 + body mentions `model` + `not found` |
+| `rate_limited` | ⏱ | amber | API 限流，等几秒重试 | HTTP 429, body says `rate limit` / `too many requests` |
+| `context_too_long` | 📏 | gray | prompt 太大，缩小任务范围 | HTTP 400/413, body says `context length` / `maximum context` |
+| `api_timeout` | ⏳ | amber | API 超时，重试 | HTTP 408/504, or the client times out before any response |
+| `tool_call_failed` | 🛠 | red | provider 返回了无法解析的结构 | Response missing `choices[0].message.content` (Anthropic: no `content[].text` block) |
+
+The full mapping table lives in `src/coding_agent.py::_HTTP_STATUS_TABLE` (status → kind) and `_BODY_PATTERNS` (body-only fallback). The status table is consulted first; the body patterns catch statuses the table doesn't cover (e.g. 422 from a custom proxy).
+
+### §F.7 Migration: from `claude_cli` to `openai_compatible`
+
+If you started with `provider: claude_cli` and want to switch to the API providers (cheaper, faster, works on a headless box), the change is small:
+
+**Before** (`.ghe/config.yml`):
+```yaml
+coding_agent:
+  provider: claude_cli
+```
+
+**After** (`.ghe/config.yml`):
+```yaml
+coding_agent:
+  provider: openai_compatible
+  base_url: https://api.openai.com/v1
+  api_key: ${LLM_API_KEY}
+  model: gpt-4o
+```
+
+**API key migration:** `ClaudeCLIProvider` reads auth from the local Claude Code CLI keychain (`claude login`). `OpenAICompatibleProvider` reads the key from `coding_agent.api_key` in YAML, with `${LLM_API_KEY}` expanded from the environment. If you keep `api_key` in `.env` and the project already loads it, the env-var form is the cleanest. Otherwise commit a literal — `.ghe/config.yml` is the same file that already holds `github.token`.
+
+**Verification:** run `ghe --repair-capabilities` after the change. `coding_agent.authenticated` should flip from `false` (the CLI's first-launch check couldn't reach a Claude binary) to `true` (the new HTTP health check returned 2xx). If it stays `false`, see `docs/coding-agent-providers.md` §"Troubleshooting".

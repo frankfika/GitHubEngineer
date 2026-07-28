@@ -194,3 +194,22 @@ To actually publish:
   atomic "approve and dispatch" flow is a v1.1 candidate.
 - `benchmarks/cost.py` uses published list prices as of mid-2026.
   Refresh the table when the upstream prices change.
+
+## 10. AI 修复闭环验收（2026-07-28）
+
+最终验收覆盖了仓库上下文、模型补丁、测试反馈修正、人工审核和发布门禁：
+
+| 检查 | 结果 |
+| --- | --- |
+| Python 全量测试 | 346 passed，19 subtests passed |
+| AI 闭环 | 首次错误 → pytest 失败 → 反馈给模型 → 二次修复 → pytest 通过 |
+| Demo/Fake 发布保护 | 前后端均拒绝 |
+| 未验证/验证失败发布保护 | 确认令牌与发布端点均拒绝 |
+| Web/desktop 资源同步 | 通过 |
+| JavaScript 语法与浏览器控制台 | 通过，无 error/warn |
+| Tauri `cargo check` | 通过 |
+| `git diff --check` | 通过 |
+
+真实 OpenAI Provider 的健康检查也必须执行。凭据无效、模型不可用或
+`base_url` 不可达时，顶部状态会明确显示“连接失败”，Issue 修复入口只会打开
+配置界面，不会启动一个看似成功的假修复。

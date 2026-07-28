@@ -165,6 +165,30 @@ def test_get_repo_failure_surfaces_as_typed_error():
     assert "missing/repo" in str(exc.value)
 
 
+def test_get_issue_summary_includes_bounded_untrusted_comments():
+    issue = _make_issue(8)
+    issue.comments = 25
+    issue.get_comments = MagicMock(
+        return_value=[
+            SimpleNamespace(
+                body=("comment " + str(index) + " ") * 500,
+                user=SimpleNamespace(login=f"user{index}"),
+                created_at=datetime.now(timezone.utc),
+            )
+            for index in range(25)
+        ]
+    )
+    repo = SimpleNamespace(get_issue=MagicMock(return_value=issue))
+    with patch("src.github_client.Github") as gh_cls:
+        gh_cls.return_value.get_repo.return_value = repo
+        summary = GitHubClient("token", "acme/widgets").get_issue_summary(8)
+
+    assert len(summary["comments"]) <= 20
+    assert sum(len(item["body"]) for item in summary["comments"]) <= 12_000
+    assert all(item["trust"] == "untrusted_user_input" for item in summary["comments"])
+    assert summary["comments_truncated"] is True
+
+
 def test_resolve_token_prefers_configured_value_without_shelling_out():
     with patch("src.github_client.subprocess.run") as run:
         assert GitHubClient.resolve_token("configured") == "configured"

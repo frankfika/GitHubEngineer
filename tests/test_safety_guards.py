@@ -302,6 +302,20 @@ class SafeSubprocessEnvTest(unittest.TestCase):
             self.assertNotIn("GITHUB_TOKEN", env)
             self.assertEqual(env.get("ANTHROPIC_API_KEY"), "sk-ant-keep")
 
+    def test_repair_worker_parent_keeps_both_scoped_credentials(self):
+        with patch.dict(
+            os.environ,
+            {
+                "PATH": "/usr/bin",
+                "GH_TOKEN": "ghp_keep",
+                "LLM_API_KEY": "sk-keep",
+            },
+            clear=False,
+        ):
+            env = safe_subprocess_env("repair-worker")
+            self.assertEqual(env.get("GH_TOKEN"), "ghp_keep")
+            self.assertEqual(env.get("LLM_API_KEY"), "sk-keep")
+
 
 class AtomicWriteJsonTest(unittest.TestCase):
     """Round 6 P0: a partial write must not leave a half-formed job file.

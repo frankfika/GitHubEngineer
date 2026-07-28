@@ -23,6 +23,9 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import tempfile
+from pathlib import Path
 from typing import Any
 
 #: Tokens that must never leak to a child process.  Listed by lower-cased
@@ -41,6 +44,37 @@ _SENSITIVE_KEYS = {
 }
 
 
+def find_desktop_executable(name: str) -> str | None:
+    """Find a CLI from either a shell or a macOS GUI-launched process.
+
+    Finder/Tauri/Electron applications commonly inherit the minimal macOS
+    launchd PATH (``/usr/bin:/bin:/usr/sbin:/sbin``). Homebrew and user-local
+    commands are therefore invisible even though they work in Terminal.
+    Resolve a small set of conventional install locations without invoking a
+    login shell or evaluating user-controlled shell startup files.
+    """
+
+    discovered = shutil.which(name)
+    if discovered:
+        return discovered
+    home = Path.home()
+    candidates = (
+        Path("/opt/homebrew/bin") / name,
+        Path("/usr/local/bin") / name,
+        home / ".local" / "bin" / name,
+        home / ".claude" / "local" / name,
+        home / "bin" / name,
+    )
+    return next(
+        (
+            str(candidate)
+            for candidate in candidates
+            if candidate.is_file() and os.access(candidate, os.X_OK)
+        ),
+        None,
+    )
+
+
 def safe_subprocess_env(purpose: str) -> dict[str, str]:
     """Return a copy of ``os.environ`` with secrets stripped.
 
@@ -56,6 +90,10 @@ def safe_subprocess_env(purpose: str) -> dict[str, str]:
       but strip GitHub tokens because the worker should not push on
       its own — push is the responsibility of the explicit publish
       step, which uses the ``gh`` policy.
+    - ``"repair-worker"``: parent environment for the trusted repair
+      coordinator. Keep both model and GitHub credentials so it can create
+      purpose-scoped child environments; coding-agent children still receive
+      the narrower ``worker`` policy and never inherit GitHub credentials.
 
     The function is deliberately conservative: when in doubt we strip
     the variable.  Coding agents have run for years without any of
@@ -86,8 +124,8 @@ def safe_subprocess_env(purpose: str) -> dict[str, str]:
     _KNOWN_GH_TOKENS = {"GITHUB_TOKEN", "GH_TOKEN"}
     _KNOWN_MODEL_KEYS = {"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "LLM_API_KEY"}
     purpose_normalized = purpose.lower().strip()
-    keep_tokens = purpose_normalized == "gh"
-    keep_model_key = purpose_normalized == "worker"
+    keep_tokens = purpose_normalized in {"gh", "repair-worker"}
+    keep_model_key = purpose_normalized in {"worker", "repair-worker"}
     safe: dict[str, str] = {}
     for key, value in os.environ.items():
         upper = key.upper()
@@ -121,8 +159,29 @@ def atomic_write_json(path: os.PathLike[str] | str, data: dict[str, Any]) -> Non
     """
 
     target = os.fspath(path)
-    tmp = f"{target}.tmp"
-    with open(tmp, "w", encoding="utf-8", newline="\n") as handle:
-        handle.write(json.dumps(data, ensure_ascii=False, indent=2))
-        handle.write("\n")
-    os.replace(tmp, target)
+    parent = os.path.dirname(os.path.abspath(target))
+    os.makedirs(parent, exist_ok=True)
+    tmp = ""
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            newline="\n",
+            prefix=f".{os.path.basename(target)}.",
+            suffix=".tmp",
+            dir=parent,
+            delete=False,
+        ) as handle:
+            tmp = handle.name
+            handle.write(json.dumps(data, ensure_ascii=False, indent=2))
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, target)
+        tmp = ""
+    finally:
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except FileNotFoundError:
+                pass

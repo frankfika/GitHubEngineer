@@ -35,6 +35,48 @@ analysis:
   # drops the lowest-signal candidates when the payload would exceed this.
   max_prompt_chars: 90000
 
+# Coding agent — which LLM provider the repair worker calls when it
+# auto-fixes an issue.  The default ``openai_compatible`` works for
+# OpenAI, DeepSeek, OpenRouter, Ollama, vLLM, LM Studio, and any other
+# server that follows the OpenAI Chat Completions schema.  Switch
+# ``provider`` to ``anthropic`` to use the first-party Anthropic
+# Messages API, or to ``claude_cli`` as a fallback that shells out to
+# the local Claude Code CLI binary (if installed).  Run
+# ``ghe --configure-coding-agent`` for an interactive walk-through.
+coding_agent:
+  provider: openai_compatible
+  # OpenAI's default endpoint.  Override for self-hosted Ollama /
+  # vLLM / DeepSeek / OpenRouter, etc.
+  base_url: https://api.openai.com/v1
+  # ``api_key`` is read directly; an empty value falls back to
+  # $LLM_API_KEY so the secret can live in the environment.
+  api_key: ${LLM_API_KEY}
+  # Any model the configured provider serves.  OpenAI: gpt-4o /
+  # o1-mini / o3-mini.  Anthropic: claude-sonnet-4-5 / claude-opus-4-1.
+  # Ollama: qwen2.5-coder:32b / deepseek-coder-v2:16b.
+  model: gpt-4o
+
+  # Or Anthropic API (first-party Messages API):
+  # provider: anthropic
+  # api_key: ${ANTHROPIC_API_KEY}
+  # model: claude-sonnet-4-5
+
+  # Or self-hosted Ollama (no auth, but the schema still wants a key):
+  # provider: openai_compatible
+  # base_url: http://localhost:11434/v1
+  # api_key: ollama
+  # model: qwen2.5-coder:32b
+
+  # Or fall back to the Claude Code CLI (legacy):
+  # provider: claude_cli
+
+# Verification executes repository tests only in an already-installed Docker
+# runtime image by default. If no supported image is present, the repair stays
+# "unverified" and cannot be published. This opt-in runs detected, fixed
+# commands on the host and should only be enabled for repositories you trust.
+repair:
+  allow_host_verification: false
+
 # Optional: directory holding the JSON history snapshots. Created on first
 # write; the diff between the most recent snapshot and the new run is
 # rendered into the Trend section of the report.

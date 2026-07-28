@@ -1,0 +1,48 @@
+# Canned responses for FakeProvider.
+# ------------------------------------
+# Key = issue number (as string). The FakeProvider extracts the issue
+# number from the worker's prompt and looks up that key here. The
+# special key ``default`` is used when the issue number isn't listed.
+#
+# Each entry is a dict with two fields:
+#   summary: human-readable label written to CodingAgentResult.summary
+#   diff:    a unified diff to apply inside the workspace
+#
+# These patches are intentionally tiny and self-contained so they
+# apply cleanly in an empty git repo. They are *not* meant to fix
+# any real bug -- they exist to exercise the repair pipeline end to
+# end (clone -> diff view -> accept/reject) without any LLM call.
+
+"1":
+  summary: "[fake] Fix #1: handle empty list in greet()"
+  diff: "--- a/src/greet.py\n+++ b/src/greet.py\n@@ -1,5 +1,7 @@\n def greet(names):\n-    return \", \".join(names)\n+    if not names:\n+        return \"Hello, world!\"\n+    return \", \".join(names)\n \n if __name__ == \"__main__\":\n     print(greet([]))\n"
+
+"2":
+  summary: "[fake] Fix #2: add type hints"
+  diff: |
+    --- a/src/math.py
+    +++ b/src/math.py
+    @@ -1,2 +1,2 @@
+    -def add(a, b):
+    +def add(a: int, b: int) -> int:
+         return a + b
+
+"3":
+  summary: "[fake] Fix #3: replace deprecated API call"
+  diff: |
+    --- a/src/api.py
+    +++ b/src/api.py
+    @@ -1,4 +1,4 @@
+     from urllib.request import urlopen
+    -resp = urlopen("https://api.example.com")
+    +resp = urlopen("https://api.example.com", timeout=10)
+     return resp.read()
+
+default:
+  summary: "[fake] Generic fallback patch"
+  diff: |
+    --- a/README.md
+    +++ b/README.md
+    @@ -1,1 +1,1 @@
+    -# Old title
+    +# New title (touched by fake provider)

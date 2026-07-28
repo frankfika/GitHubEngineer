@@ -9,6 +9,7 @@ dist/
 build/
 node_modules/
 src-tauri/target/
+src-tauri/binaries/
 .codex/run/
 *.egg-info/
 .ghe/config.yml

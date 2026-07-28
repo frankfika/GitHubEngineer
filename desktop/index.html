@@ -2,22 +2,29 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f4f4f1">
   <title>GitHub Engineer</title>
   <link rel="stylesheet" href="/ui/app.css">
 </head>
 <body>
-  <div id="app">
-    <header class="ghe-header">
-      <h1>GitHub Engineer</h1>
-      <nav class="ghe-nav">
-        <a href="/" data-route="home">Home</a>
-        <a href="/briefs" data-route="briefs">Briefs</a>
-        <a href="/decisions" data-route="decisions">Decisions</a>
-      </nav>
-    </header>
-    <main class="ghe-main">
-      <p>请从项目目录运行 <code>ghe --serve</code>，或通过桌面壳启动以激活完整功能。</p>
+  <div class="app-shell" id="desktop-bootstrap">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">GE</span>
+        <h1>GitHub Engineer</h1>
+      </div>
+      <div class="sidebar-footer"><span class="online">桌面应用</span></div>
+    </aside>
+    <main class="workspace">
+      <section class="content-page" aria-live="polite">
+        <div class="empty-state">
+          <h1>正在准备工作区</h1>
+          <p id="desktop-bootstrap-status">正在连接本地 GitHub Engineer 服务…</p>
+          <button class="primary-button" id="desktop-bootstrap-retry" type="button">正在连接…</button>
+          <p class="brief-card-meta">如果服务未自动启动，也可以在项目目录运行 <code>ghe --serve</code>。</p>
+        </div>
+      </section>
     </main>
   </div>
   <script src="/ui/app.js" defer></script>

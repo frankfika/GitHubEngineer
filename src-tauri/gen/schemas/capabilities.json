@@ -1,1 +1,1 @@
-{}
+{"default":{"identifier":"default","description":"Default capability for the GitHub Engineer main window. The Python --serve backend exposes the IPC surface area; the Tauri shell is a thin WebView wrapper that only needs the core defaults.","local":true,"windows":["main"],"permissions":["core:default"]}}

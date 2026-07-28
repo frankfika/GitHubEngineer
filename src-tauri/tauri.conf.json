@@ -4,7 +4,8 @@
   "version": "1.0.0",
   "identifier": "com.opencsg.github-engineer",
   "build": {
-    "beforeDevCommand": ".venv/bin/python -m src.main --config .ghe/config.yml --serve --serve-host 127.0.0.1",
+    "beforeDevCommand": ".venv/bin/python scripts/build_desktop_sidecar.py && .venv/bin/python -m src.main --config .ghe/config.yml --serve --serve-host 127.0.0.1",
+    "beforeBuildCommand": ".venv/bin/python scripts/build_desktop_sidecar.py",
     "devUrl": "http://127.0.0.1:8765/ui/",
     "frontendDist": "../desktop"
   },
@@ -31,6 +32,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "externalBin": [
+      "binaries/github-engineer-backend"
+    ],
     "icon": [
       "icons/icon.png"
     ],

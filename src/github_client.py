@@ -6,7 +6,7 @@ from typing import Any
 
 from github import Github, GithubException, RateLimitExceededException
 
-from .process_runtime import safe_subprocess_env
+from .process_runtime import find_desktop_executable, safe_subprocess_env
 
 
 class GitHubClientError(RuntimeError):
@@ -35,9 +35,12 @@ class GitHubClient:
 
         if configured_token:
             return configured_token
+        gh_executable = find_desktop_executable("gh")
+        if not gh_executable:
+            return None
         try:
             result = subprocess.run(
-                ["gh", "auth", "token"],
+                [gh_executable, "auth", "token"],
                 check=False,
                 capture_output=True,
                 text=True,
@@ -227,7 +230,7 @@ class GitHubClient:
         ]
 
     def get_issue_summary(self, issue_number: int) -> dict[str, Any]:
-        """Return one Issue for a local task draft."""
+        """Return one Issue plus a bounded, explicitly untrusted comment excerpt."""
 
         try:
             issue = self.repo.get_issue(number=issue_number)
@@ -235,6 +238,35 @@ class GitHubClient:
             raise GitHubClientError(f"Could not access issue #{issue_number}: {exc}") from exc
         if issue.pull_request:
             raise GitHubClientError(f"#{issue_number} is a pull request, not an issue.")
+        comments: list[dict[str, str]] = []
+        remaining_characters = 12_000
+        try:
+            raw_comments = issue.get_comments()
+            for index, comment in enumerate(raw_comments):
+                if index >= 20 or remaining_characters <= 0:
+                    break
+                body = str(getattr(comment, "body", "") or "")
+                body = body[: min(2_000, remaining_characters)]
+                remaining_characters -= len(body)
+                user = getattr(comment, "user", None)
+                author = str(getattr(user, "login", "") or "unknown")
+                created_at = getattr(comment, "created_at", None)
+                comments.append(
+                    {
+                        "author": author[:100],
+                        "created_at": (
+                            created_at.isoformat()
+                            if hasattr(created_at, "isoformat")
+                            else ""
+                        ),
+                        "body": body,
+                        "trust": "untrusted_user_input",
+                    }
+                )
+        except (GithubException, AttributeError):
+            # Comments enrich the repair context but a secondary API/rate-limit
+            # failure must not make the Issue itself inaccessible.
+            comments = []
         return {
             "number": issue.number,
             "title": issue.title,
@@ -246,6 +278,8 @@ class GitHubClient:
             "assignees": [assignee.login for assignee in issue.assignees],
             "state": issue.state,
             "url": issue.html_url,
+            "comments": comments,
+            "comments_truncated": int(issue.comments) > len(comments),
         }
 
     def get_repository_profile(self) -> dict[str, Any]:
