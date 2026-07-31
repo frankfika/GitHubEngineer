@@ -37,7 +37,7 @@ runs:
       # NOTE: setup-python / upload-artifact versions are tracked by Dependabot
       # (see .github/dependabot.yml). When Dependabot opens a version-bump PR,
       # merge it and the action picks up the new SHA automatically.
-      uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
       with:
         python-version: "3.11"
 
@@ -66,7 +66,7 @@ runs:
         PYTHONPATH="${{ github.action_path }}" python -m src.main "${args[@]}"
 
     - name: Upload report
-      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         name: maintainer-brief
         path: ${{ inputs.report-path }}
