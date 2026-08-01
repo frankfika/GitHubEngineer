@@ -712,6 +712,8 @@ pre { padding: 13px 15px; overflow-x: auto; background: var(--surface-soft); bor
 .diff-view-upgrade { margin-left: auto; padding: 4px 10px; color: var(--success); background: color-mix(in srgb, var(--success) 14%, transparent); border-radius: 999px; font-size: 10.5px; }
 .diff-view-body { display: grid; grid-template-columns: 1fr 320px; min-height: 0; overflow: hidden; }
 .diff-view-editor { min-width: 0; overflow: auto; }
+.diff-view-fallback-note { padding: 9px 14px; color: var(--warning); background: color-mix(in srgb, var(--warning) 9%, var(--surface)); border-bottom: 1px solid var(--line); font-size: 11px; }
+.diff-view-plain { min-width: 100%; width: max-content; min-height: calc(100% - 38px); margin: 0; padding: 14px 18px; color: var(--text-2); background: var(--surface-solid); font: 12px/1.55 "SF Mono", ui-monospace, monospace; white-space: pre; tab-size: 4; }
 .diff-view-editor .cm-editor { height: 100%; background: var(--surface-solid); font-family: "SF Mono", ui-monospace, monospace; font-size: 12px; }
 .diff-view-editor .cm-scroller { font-family: "SF Mono", ui-monospace, monospace; line-height: 1.55; }
 .diff-view-editor .cm-gutters { background: var(--surface-solid); border-right: 1px solid var(--line); color: var(--text-3); }
@@ -1373,6 +1375,7 @@ APP_JS = r"""
   // 徽章说明 "可发 PR", 两种状态都是一等公民.
   const updateModeIndicator = (authenticated, accountLabel = '') => {
     if (!modeIndicator) return;
+    if (diffConnectGithub) diffConnectGithub.hidden = Boolean(authenticated);
     if (authenticated) {
       modeIndicator.dataset.mode = 'authenticated';
       modeIndicator.textContent = accountLabel
@@ -1649,7 +1652,6 @@ APP_JS = r"""
   };
 
   const loadRepositories = async () => {
-    if (!repoSwitcher) return;
     try {
       const result = await fetchJson('/api/repositories');
       const repositories = result.repositories || [];
@@ -1675,10 +1677,12 @@ APP_JS = r"""
         }
       }
       if (ownedRepoCount) ownedRepoCount.textContent = String(repositories.length);
-      repoViewer.textContent = result.viewer ? `@${result.viewer}` : '公开仓库可直接查看 · 更多功能';
-      repoViewer.title = result.viewer
-        ? '账号已连接，点击查看说明'
-        : '公开仓库无需连接；点击了解更多账号功能';
+      if (repoViewer) {
+        repoViewer.textContent = result.viewer ? `@${result.viewer}` : '公开仓库可直接查看 · 更多功能';
+        repoViewer.title = result.viewer
+          ? '账号已连接，点击查看说明'
+          : '公开仓库无需连接；点击了解更多账号功能';
+      }
       setConnectionPanel(
         'account',
         result.viewer ? 'ready' : 'optional',
@@ -1687,12 +1691,16 @@ APP_JS = r"""
       // 同步更新顶部 "匿名 / 完整模式" 徽章 — 跟随 viewer 字段
       // (anonymous / authenticated) 走, 不依赖第二个 fetch.
       updateModeIndicator(Boolean(result.viewer), result.viewer || '');
+      // Secondary pages share the sidebar and connection indicators but do
+      // not render the home-only repository switcher or Issue inbox. Their
+      // shared chrome is now current, so leave the home initialization here.
+      if (!repoSwitcher) return;
       repoSwitcher.innerHTML = repositories.map((repository) => {
-            const suffix = repository.access === 'monitor'
-              ? ' · 外部 · 可贡献'
-              : (repository.private ? ' · 私有' : '');
-            return `<option value="${escapeHtml(repository.full_name)}">${escapeHtml(repository.full_name)}${suffix}</option>`;
-          }).join('');
+        const suffix = repository.access === 'monitor'
+          ? ' · 外部 · 可贡献'
+          : (repository.private ? ' · 私有' : '');
+        return `<option value="${escapeHtml(repository.full_name)}">${escapeHtml(repository.full_name)}${suffix}</option>`;
+      }).join('');
       if (!repositories.length) {
         // 没配置任何 repo: 主区空状态, 引导添加
         currentRepository = '';
@@ -1738,10 +1746,14 @@ APP_JS = r"""
       try { window.localStorage.setItem('ghe:selected-repository', selectedRepository); } catch (_) {}
       await loadIssues(selectedRepository);
     } catch (error) {
-      repoSwitcher.innerHTML = '<option value="" selected disabled>无法读取仓库</option>';
-      repoSwitcher.disabled = true;
-      issueSummary.innerHTML = '<span><strong>—</strong> 个待处理</span>';
-      issueInbox.innerHTML = `<div class="issue-error"><strong>暂时没能读取仓库列表</strong><span>${escapeHtml(error.message || '公开仓库仍可通过地址添加；连接 GitHub 后可以使用账号功能。')}</span><div class="error-actions"><button class="soft-button" type="button" data-open-github-setup>查看连接方式</button></div></div>`;
+      if (repoSwitcher) {
+        repoSwitcher.innerHTML = '<option value="" selected disabled>无法读取仓库</option>';
+        repoSwitcher.disabled = true;
+      }
+      if (issueSummary) issueSummary.innerHTML = '<span><strong>—</strong> 个待处理</span>';
+      if (issueInbox) {
+        issueInbox.innerHTML = `<div class="issue-error"><strong>暂时没能读取仓库列表</strong><span>${escapeHtml(error.message || '公开仓库仍可通过地址添加；连接 GitHub 后可以使用账号功能。')}</span><div class="error-actions"><button class="soft-button" type="button" data-open-github-setup>查看连接方式</button></div></div>`;
+      }
       if (loadIssuesButton) loadIssuesButton.hidden = true;
       if (refreshIssues) refreshIssues.hidden = true;
       currentRepository = '';
@@ -2571,7 +2583,23 @@ APP_JS = r"""
   };
 
   const mountDiffEditor = async (diffData, isCurrentRequest = () => true) => {
-    const mod = await ensureDiffViewAssets();
+    let mod;
+    try {
+      mod = await ensureDiffViewAssets();
+    } catch (_) {
+      if (!isCurrentRequest() || !diffViewEditor) return false;
+      // Code review is a core desktop workflow, so a CDN outage must only
+      // remove the enhanced editor—not hunk decisions or publish gating.
+      // The unified diff is still escaped and rendered locally, while the
+      // existing sidebar remains fully interactive.
+      const { doc } = _buildDiffDoc(diffData);
+      if (_diffEditorView) {
+        _diffEditorView.destroy();
+        _diffEditorView = null;
+      }
+      diffViewEditor.innerHTML = `<div class="diff-view-fallback-note" role="status">增强代码视图暂时不可用，已切换到离线纯文本审核。</div><pre class="diff-view-plain">${escapeHtml(doc)}</pre>`;
+      return true;
+    }
     if (!isCurrentRequest() || !mod || !diffViewEditor) return false;
     // 如果有上一份, 先销毁
     if (_diffEditorView) {
@@ -3606,6 +3634,9 @@ APP_JS = r"""
   document.addEventListener('click', (event) => {
     const pill = event.target.closest('[data-select-repo]');
     if (!pill) return;
+    // Brief / decision pages do not have an Issue inbox. Their repository
+    // pills are normal links and must navigate to the repository brief.
+    if (!issueInbox || !issueSummary) return;
     if (event.button !== 0) return;        // 中键右键放行
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;  // 修饰键放行
     event.preventDefault();

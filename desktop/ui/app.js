@@ -531,6 +531,7 @@
   // 徽章说明 "可发 PR", 两种状态都是一等公民.
   const updateModeIndicator = (authenticated, accountLabel = '') => {
     if (!modeIndicator) return;
+    if (diffConnectGithub) diffConnectGithub.hidden = Boolean(authenticated);
     if (authenticated) {
       modeIndicator.dataset.mode = 'authenticated';
       modeIndicator.textContent = accountLabel
@@ -807,7 +808,6 @@
   };
 
   const loadRepositories = async () => {
-    if (!repoSwitcher) return;
     try {
       const result = await fetchJson('/api/repositories');
       const repositories = result.repositories || [];
@@ -833,10 +833,12 @@
         }
       }
       if (ownedRepoCount) ownedRepoCount.textContent = String(repositories.length);
-      repoViewer.textContent = result.viewer ? `@${result.viewer}` : '公开仓库可直接查看 · 更多功能';
-      repoViewer.title = result.viewer
-        ? '账号已连接，点击查看说明'
-        : '公开仓库无需连接；点击了解更多账号功能';
+      if (repoViewer) {
+        repoViewer.textContent = result.viewer ? `@${result.viewer}` : '公开仓库可直接查看 · 更多功能';
+        repoViewer.title = result.viewer
+          ? '账号已连接，点击查看说明'
+          : '公开仓库无需连接；点击了解更多账号功能';
+      }
       setConnectionPanel(
         'account',
         result.viewer ? 'ready' : 'optional',
@@ -845,12 +847,16 @@
       // 同步更新顶部 "匿名 / 完整模式" 徽章 — 跟随 viewer 字段
       // (anonymous / authenticated) 走, 不依赖第二个 fetch.
       updateModeIndicator(Boolean(result.viewer), result.viewer || '');
+      // Secondary pages share the sidebar and connection indicators but do
+      // not render the home-only repository switcher or Issue inbox. Their
+      // shared chrome is now current, so leave the home initialization here.
+      if (!repoSwitcher) return;
       repoSwitcher.innerHTML = repositories.map((repository) => {
-            const suffix = repository.access === 'monitor'
-              ? ' · 外部 · 可贡献'
-              : (repository.private ? ' · 私有' : '');
-            return `<option value="${escapeHtml(repository.full_name)}">${escapeHtml(repository.full_name)}${suffix}</option>`;
-          }).join('');
+        const suffix = repository.access === 'monitor'
+          ? ' · 外部 · 可贡献'
+          : (repository.private ? ' · 私有' : '');
+        return `<option value="${escapeHtml(repository.full_name)}">${escapeHtml(repository.full_name)}${suffix}</option>`;
+      }).join('');
       if (!repositories.length) {
         // 没配置任何 repo: 主区空状态, 引导添加
         currentRepository = '';
@@ -896,10 +902,14 @@
       try { window.localStorage.setItem('ghe:selected-repository', selectedRepository); } catch (_) {}
       await loadIssues(selectedRepository);
     } catch (error) {
-      repoSwitcher.innerHTML = '<option value="" selected disabled>无法读取仓库</option>';
-      repoSwitcher.disabled = true;
-      issueSummary.innerHTML = '<span><strong>—</strong> 个待处理</span>';
-      issueInbox.innerHTML = `<div class="issue-error"><strong>暂时没能读取仓库列表</strong><span>${escapeHtml(error.message || '公开仓库仍可通过地址添加；连接 GitHub 后可以使用账号功能。')}</span><div class="error-actions"><button class="soft-button" type="button" data-open-github-setup>查看连接方式</button></div></div>`;
+      if (repoSwitcher) {
+        repoSwitcher.innerHTML = '<option value="" selected disabled>无法读取仓库</option>';
+        repoSwitcher.disabled = true;
+      }
+      if (issueSummary) issueSummary.innerHTML = '<span><strong>—</strong> 个待处理</span>';
+      if (issueInbox) {
+        issueInbox.innerHTML = `<div class="issue-error"><strong>暂时没能读取仓库列表</strong><span>${escapeHtml(error.message || '公开仓库仍可通过地址添加；连接 GitHub 后可以使用账号功能。')}</span><div class="error-actions"><button class="soft-button" type="button" data-open-github-setup>查看连接方式</button></div></div>`;
+      }
       if (loadIssuesButton) loadIssuesButton.hidden = true;
       if (refreshIssues) refreshIssues.hidden = true;
       currentRepository = '';
@@ -1729,7 +1739,23 @@
   };
 
   const mountDiffEditor = async (diffData, isCurrentRequest = () => true) => {
-    const mod = await ensureDiffViewAssets();
+    let mod;
+    try {
+      mod = await ensureDiffViewAssets();
+    } catch (_) {
+      if (!isCurrentRequest() || !diffViewEditor) return false;
+      // Code review is a core desktop workflow, so a CDN outage must only
+      // remove the enhanced editor—not hunk decisions or publish gating.
+      // The unified diff is still escaped and rendered locally, while the
+      // existing sidebar remains fully interactive.
+      const { doc } = _buildDiffDoc(diffData);
+      if (_diffEditorView) {
+        _diffEditorView.destroy();
+        _diffEditorView = null;
+      }
+      diffViewEditor.innerHTML = `<div class="diff-view-fallback-note" role="status">增强代码视图暂时不可用，已切换到离线纯文本审核。</div><pre class="diff-view-plain">${escapeHtml(doc)}</pre>`;
+      return true;
+    }
     if (!isCurrentRequest() || !mod || !diffViewEditor) return false;
     // 如果有上一份, 先销毁
     if (_diffEditorView) {
@@ -2764,6 +2790,9 @@
   document.addEventListener('click', (event) => {
     const pill = event.target.closest('[data-select-repo]');
     if (!pill) return;
+    // Brief / decision pages do not have an Issue inbox. Their repository
+    // pills are normal links and must navigate to the repository brief.
+    if (!issueInbox || !issueSummary) return;
     if (event.button !== 0) return;        // 中键右键放行
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;  // 修饰键放行
     event.preventDefault();

@@ -1361,6 +1361,62 @@ def _read_config_yaml(path: Path) -> "dict[str, Any]":
     return loaded if isinstance(loaded, dict) else {}
 
 
+def _valid_repo_name(value: str) -> bool:
+    parts = value.split("/")
+    return (
+        len(parts) == 2
+        and all(parts)
+        and all(
+            all(character.isalnum() or character in "._-" for character in part)
+            for part in parts
+        )
+    )
+
+
+def _write_config_repositories(path: Path, values: list[str]) -> list[str]:
+    """Atomically replace the canonical top-level ``repos`` list."""
+
+    import tempfile
+    import yaml
+
+    canonical = list(
+        dict.fromkeys(value for value in values if _valid_repo_name(value))
+    )
+    if path.exists():
+        try:
+            loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except (OSError, yaml.YAMLError) as exc:
+            raise ValueError(f"could not safely read repository config: {exc}") from exc
+        if not isinstance(loaded, dict):
+            raise ValueError("repository config must contain a YAML object")
+        raw_config = loaded
+    else:
+        raw_config = {}
+    raw_config["repos"] = canonical
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = ""
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            dir=path.parent,
+            delete=False,
+        ) as handle:
+            temporary = handle.name
+            yaml.safe_dump(raw_config, handle, allow_unicode=True, sort_keys=False)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, path)
+        temporary = ""
+    finally:
+        if temporary:
+            Path(temporary).unlink(missing_ok=True)
+    return canonical
+
+
 def configure_coding_agent(args: "argparse.Namespace | None" = None) -> int:
     """Interactively walk the user through the ``coding_agent`` config.
 
@@ -1707,6 +1763,7 @@ def serve(args: argparse.Namespace) -> int:
     # particular job.
     _job_locks = tuple(threading.RLock() for _ in range(64))
     _config_lock = threading.RLock()
+    _warned_about_watched_repositories = False
 
     def _job_lock(job_id: str) -> threading.RLock:
         return _job_locks[hash(job_id) % len(_job_locks)]
@@ -1736,6 +1793,7 @@ def serve(args: argparse.Namespace) -> int:
     _confirm_tokens: dict[str, tuple[str, float]] = {}
 
     def _load_watched_repositories() -> list[str]:
+        nonlocal _warned_about_watched_repositories
         try:
             values = json.loads(watched_repositories_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
@@ -1744,23 +1802,33 @@ def serve(args: argparse.Namespace) -> int:
         # the canonical list in .ghe/config.yml's `repos:` key. We still
         # honour the file (so older installs keep working) but warn once
         # per process so the path forward is visible.
-        print(
-            f"warning: {watched_repositories_path} is deprecated; "
-            "move the list into .ghe/config.yml under the `repos:` key.",
-            file=sys.stderr,
-        )
+        if not _warned_about_watched_repositories:
+            print(
+                f"warning: {watched_repositories_path} is deprecated; "
+                "move the list into .ghe/config.yml under the `repos:` key.",
+                file=sys.stderr,
+            )
+            _warned_about_watched_repositories = True
         return [
             str(value)
             for value in values
             if isinstance(value, str) and _valid_repo_name(value)
         ]
 
-    def _save_watched_repositories(values: list[str]) -> None:
-        watched_repositories_path.parent.mkdir(parents=True, exist_ok=True)
-        watched_repositories_path.write_text(
-            json.dumps(sorted(set(values)), indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8",
-        )
+    def _save_configured_repositories(values: list[str]) -> None:
+        """Persist UI-added repositories to the canonical config list.
+
+        Older desktop builds wrote ``watched_repositories.json`` even after
+        that file was deprecated. New writes go to ``repos:`` atomically so a
+        repository added in the UI is also available to the CLI, Actions, and
+        the next desktop launch.
+        """
+
+        target = Path(args.config or ".ghe/config.yml")
+        with _config_lock:
+            canonical = _write_config_repositories(target, values)
+            config["repos"] = list(canonical)
+            repos[:] = canonical
 
     def _record_monitoring_snapshot(
         repo_full_name: str, profile: dict[str, object], open_issues: int
@@ -1791,17 +1859,6 @@ def serve(args: argparse.Namespace) -> int:
             encoding="utf-8",
         )
         return history[-30:]
-
-    def _valid_repo_name(value: str) -> bool:
-        parts = value.split("/")
-        return (
-            len(parts) == 2
-            and all(parts)
-            and all(
-                all(character.isalnum() or character in "._-" for character in part)
-                for part in parts
-            )
-        )
 
     def render_repair_capabilities(
         *, force_refresh: bool = False
@@ -2460,10 +2517,18 @@ def serve(args: argparse.Namespace) -> int:
                 login = GitHubClient.get_authenticated_login(github_token)
             except GitHubClientError:
                 login = ""
-        watched = _load_watched_repositories()
-        if value not in watched:
-            watched.append(value)
-            _save_watched_repositories(watched)
+        if value not in repos:
+            try:
+                _save_configured_repositories([*repos, value])
+            except (OSError, ValueError) as exc:
+                return (
+                    500,
+                    json.dumps(
+                        {"error": f"无法安全保存仓库配置: {str(exc)[:240]}"},
+                        ensure_ascii=False,
+                    ).encode("utf-8"),
+                    "application/json",
+                )
         _invalidate_repo_caches()
         access = (
             "owner"
@@ -3834,6 +3899,20 @@ footer {{ max-width: 960px; margin: 64px auto 32px; padding: 0 24px;
         )
 
     class Handler(BaseHTTPRequestHandler):
+        server_version = "GitHubEngineer"
+        sys_version = ""
+
+        def end_headers(self) -> None:
+            # This service can read local workspaces and start repair jobs.
+            # Keep browser responses non-sniffable, non-embeddable, and out
+            # of shared caches even though the listener is loopback-only.
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("X-Frame-Options", "DENY")
+            self.send_header("Referrer-Policy", "no-referrer")
+            self.send_header("Cross-Origin-Resource-Policy", "same-origin")
+            super().end_headers()
+
         def log_message(self, format: str, *args) -> None:  # noqa: A002
             sys.stderr.write(
                 f"[{self.log_date_time_string()}] {self.address_string()} {format % args}\n"

@@ -56,6 +56,28 @@ def test_configured_repository_is_selected_and_loaded_on_startup() -> None:
     assert "永远不预选" not in source
 
 
+def test_secondary_pages_refresh_shared_repository_state_and_keep_links_working() -> None:
+    source = APP_JS
+
+    load_repositories = source[source.index("const loadRepositories = async () => {") :]
+    load_repositories = load_repositories[: load_repositories.index("\n  const renderOwnedRepositoryChoices")]
+    first_fetch = load_repositories.index("fetchJson('/api/repositories')")
+    secondary_return = load_repositories.index("if (!repoSwitcher) return")
+    assert first_fetch < load_repositories.index("updateModeIndicator") < secondary_return
+    assert "if (repoViewer) {" in load_repositories
+    assert "if (repoSwitcher) {" in load_repositories
+    assert "if (issueSummary) issueSummary.innerHTML" in load_repositories
+    assert "if (issueInbox) {" in load_repositories
+    assert "diffConnectGithub.hidden = Boolean(authenticated)" in source
+
+    repository_click = source[source.index("const pill = event.target.closest('[data-select-repo]')") :]
+    repository_click = repository_click[: repository_click.index("\n  if (refreshIssues)")]
+    assert "if (!issueInbox || !issueSummary) return" in repository_click
+    assert repository_click.index("if (!issueInbox || !issueSummary) return") < repository_click.index(
+        "event.preventDefault()"
+    )
+
+
 def test_unverified_repair_offers_explicit_host_verification_consent() -> None:
     source = APP_JS
 
@@ -103,3 +125,14 @@ def test_demo_and_unverified_repairs_fail_closed_before_publish() -> None:
     confirmation_request = source.index("/confirm-token", click_guard)
     publish_request = source.index("/publish", confirmation_request)
     assert click_guard < confirmation_request < publish_request
+
+
+def test_diff_review_has_an_offline_fallback_without_losing_hunk_controls() -> None:
+    source = APP_JS
+
+    assert "增强代码视图暂时不可用，已切换到离线纯文本审核" in source
+    assert 'class="diff-view-plain"' in source
+    assert "const { doc } = _buildDiffDoc(diffData);" in source
+    assert "${escapeHtml(doc)}" in source
+    assert "renderDiffSidebar();\n      const mounted = await mountDiffEditor" in source
+    assert "if (!mounted || !isCurrentRequest()) return;" in source

@@ -699,6 +699,8 @@ pre { padding: 13px 15px; overflow-x: auto; background: var(--surface-soft); bor
 .diff-view-upgrade { margin-left: auto; padding: 4px 10px; color: var(--success); background: color-mix(in srgb, var(--success) 14%, transparent); border-radius: 999px; font-size: 10.5px; }
 .diff-view-body { display: grid; grid-template-columns: 1fr 320px; min-height: 0; overflow: hidden; }
 .diff-view-editor { min-width: 0; overflow: auto; }
+.diff-view-fallback-note { padding: 9px 14px; color: var(--warning); background: color-mix(in srgb, var(--warning) 9%, var(--surface)); border-bottom: 1px solid var(--line); font-size: 11px; }
+.diff-view-plain { min-width: 100%; width: max-content; min-height: calc(100% - 38px); margin: 0; padding: 14px 18px; color: var(--text-2); background: var(--surface-solid); font: 12px/1.55 "SF Mono", ui-monospace, monospace; white-space: pre; tab-size: 4; }
 .diff-view-editor .cm-editor { height: 100%; background: var(--surface-solid); font-family: "SF Mono", ui-monospace, monospace; font-size: 12px; }
 .diff-view-editor .cm-scroller { font-family: "SF Mono", ui-monospace, monospace; line-height: 1.55; }
 .diff-view-editor .cm-gutters { background: var(--surface-solid); border-right: 1px solid var(--line); color: var(--text-3); }

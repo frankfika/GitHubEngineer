@@ -15,7 +15,7 @@ The brief is a single Markdown file. The decision memory is one YAML file. The h
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![Status: Production/Stable](https://img.shields.io/badge/status-stable-green.svg)](pyproject.toml)
-[![Tests: 346 passing](https://img.shields.io/badge/tests-346%20passing-brightgreen.svg)](tests/)
+[![Tests: 367 passing](https://img.shields.io/badge/tests-367%20passing-brightgreen.svg)](tests/)
 [![CI: GitHub Actions](https://img.shields.io/badge/CI-GitHub%20Actions-blue.svg)](.github/workflows/test.yml)
 [![LLM: OpenAI-compatible](https://img.shields.io/badge/LLM-OpenAI%20compatible-7c3aed.svg)](#model)
 
