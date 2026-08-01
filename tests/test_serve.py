@@ -122,6 +122,18 @@ class ServeSubcommandTest(unittest.TestCase):
         env = os.environ.copy()
         env["GHE_SERVE_PORT"] = str(self.port)
         env["PYTHONPATH"] = str(Path(__file__).resolve().parent.parent)
+        # pytest-cov auto-instruments subprocesses through these variables.
+        # The server is restarted for every test to isolate in-memory state, so
+        # tracing each child makes GitHub's macOS runners spend tens of seconds
+        # per startup. Ubuntu still records the subprocess coverage.
+        if sys.platform == "darwin" and env.get("CI"):
+            for name in (
+                "COV_CORE_SOURCE",
+                "COV_CORE_CONFIG",
+                "COV_CORE_DATAFILE",
+                "COV_CORE_BRANCH",
+            ):
+                env.pop(name, None)
         self._process = subprocess.Popen(
             [
                 sys.executable,
