@@ -4,8 +4,11 @@
   "version": "1.0.0",
   "description": "Tauri desktop shell for GitHub Engineer",
   "scripts": {
-    "desktop": "cargo tauri dev",
-    "desktop:build": "cargo tauri build",
-    "tauri": "cargo tauri"
+    "desktop": "tauri dev",
+    "desktop:build": "tauri build",
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.11.4"
   }
 }
