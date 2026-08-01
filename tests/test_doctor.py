@@ -59,7 +59,8 @@ class TestRunDoctor:
             "github": {},
         }
 
-        with patch("src.doctor.GitHubClient.resolve_token", return_value=None):
+        with patch("src.doctor.GitHubClient") as mock_github:
+            mock_github.resolve_token.return_value = None
             result = run_doctor()
 
         assert result == 1
@@ -77,7 +78,8 @@ class TestRunDoctor:
             "github": {"token": "${GITHUB_TOKEN}"},
         }
 
-        with patch("src.doctor.GitHubClient.resolve_token", return_value=None):
+        with patch("src.doctor.GitHubClient") as mock_github:
+            mock_github.resolve_token.return_value = None
             result = run_doctor()
 
         assert result == 1
