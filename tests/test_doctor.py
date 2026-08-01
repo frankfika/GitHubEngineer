@@ -23,7 +23,8 @@ class TestRunDoctor:
         assert result == 1
 
     @patch("sys.version_info", (3, 10, 0))
-    def test_old_python_version(self):
+    @patch("src.doctor.Path.exists", return_value=False)
+    def test_old_python_version(self, _mock_exists):
         """Should fail on Python < 3.11."""
         result = run_doctor()
 
@@ -58,7 +59,8 @@ class TestRunDoctor:
             "github": {},
         }
 
-        result = run_doctor()
+        with patch("src.doctor.GitHubClient.resolve_token", return_value=None):
+            result = run_doctor()
 
         assert result == 1
 
@@ -75,7 +77,8 @@ class TestRunDoctor:
             "github": {"token": "${GITHUB_TOKEN}"},
         }
 
-        result = run_doctor()
+        with patch("src.doctor.GitHubClient.resolve_token", return_value=None):
+            result = run_doctor()
 
         assert result == 1
 
