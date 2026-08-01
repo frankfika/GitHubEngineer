@@ -43,6 +43,42 @@ from .web_ui import APP_CSS, APP_JS, DIFF_VIEW_CLIENT_JS, render_shell
 from .diff_view import parse_unified_diff, summarise_diff
 
 
+def _repair_worker_argv(job_path: Path, mode: str, config_path: str) -> list[str]:
+    """Return a worker command for source and PyInstaller runtimes."""
+
+    worker_args = [str(job_path.resolve()), mode, "--config", config_path]
+    if getattr(sys, "frozen", False):
+        # In a PyInstaller bundle sys.executable is this application, not a
+        # Python interpreter. Route through the bundle's private dispatch
+        # flag instead of passing an unsupported ``-m`` argument to the CLI.
+        return [sys.executable, "--repair-worker", *worker_args]
+    return [sys.executable, "-m", "src.repair_worker", *worker_args]
+
+
+def _record_repair_worker_crash(job_path: Path, returncode: int) -> None:
+    """Fail a task that would otherwise remain permanently in progress."""
+
+    transient = {
+        "queued",
+        "publish_queued",
+        "cloning",
+        "running",
+        "verifying",
+        "revising",
+        "publishing",
+    }
+    try:
+        job = json.loads(job_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    if not isinstance(job, dict) or str(job.get("status") or "") not in transient:
+        return
+    job["status"] = "failed"
+    job["message"] = f"Repair worker exited unexpectedly (code {returncode})."
+    job["updated_at"] = datetime.now(timezone.utc).isoformat()
+    atomic_write_json(job_path, job)
+
+
 def _iso_utc(value: datetime) -> str:
     """Render a datetime as ISO 8601 in UTC.
 
@@ -2840,15 +2876,7 @@ Issue：[#{issue_number} — {issue["title"]}]({issue["url"]})
         config_path = args.config if args.config else ".ghe/config.yml"
         try:
             process = subprocess.Popen(
-                [
-                    sys.executable,
-                    "-m",
-                    "src.repair_worker",
-                    str(job_path.resolve()),
-                    mode,
-                    "--config",
-                    config_path,
-                ],
+                _repair_worker_argv(job_path, mode, config_path),
                 cwd=Path.cwd(),
                 env=safe_subprocess_env("repair-worker"),
                 stdout=log_stream,
@@ -2870,9 +2898,11 @@ Issue：[#{issue_number} — {issue["title"]}]({issue["url"]})
 
             def _reap() -> None:
                 try:
-                    process.wait()
+                    returncode = process.wait()
                 except OSError:
-                    pass
+                    return
+                if returncode != 0:
+                    _record_repair_worker_crash(job_path, returncode)
 
             threading.Thread(target=_reap, daemon=True, name=f"ghe-reap-{process.pid}").start()
         return ""
@@ -2924,6 +2954,20 @@ Issue：[#{issue_number} — {issue["title"]}]({issue["url"]})
             job["status"] = "queued"
             job["message"] = "已收到你的指导，准备再次修改…"
             mode = "revise"
+        elif action == "verify":
+            if payload.get("allow_host_verification") is not True:
+                return (
+                    400,
+                    json.dumps(
+                        {"error": "必须明确同意在本机执行仓库测试。"},
+                        ensure_ascii=False,
+                    ).encode("utf-8"),
+                    "application/json",
+                )
+            job["allow_host_verification"] = True
+            job["status"] = "queued"
+            job["message"] = "已确认风险，准备在本机运行验证…"
+            mode = "verify"
         elif action == "publish":
             # Publish triggers an external side effect (gh pr create). The
             # caller must first GET /api/repairs/<id>/confirm-token and
@@ -4018,7 +4062,7 @@ footer {{ max-width: 960px; margin: 64px auto 32px; padding: 0 24px;
             repair_action = (
                 len(repair_parts) == 4
                 and repair_parts[:2] == ["api", "repairs"]
-                and repair_parts[3] in {"guidance", "publish", "hunk-decision"}
+                and repair_parts[3] in {"guidance", "verify", "publish", "hunk-decision"}
             )
             if path not in {
                 "/decisions",

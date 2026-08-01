@@ -45,6 +45,28 @@ def test_packaged_javascript_is_valid_and_has_race_guards() -> None:
     assert "Date.now() + 20000" in source
 
 
+def test_configured_repository_is_selected_and_loaded_on_startup() -> None:
+    source = APP_JS
+
+    assert "window.localStorage.getItem('ghe:selected-repository')" in source
+    assert "repositoryNames.has(result.selected)" in source
+    assert "repositories[0].full_name" in source
+    assert "repoSwitcher.value = selectedRepository" in source
+    assert "await loadIssues(selectedRepository)" in source
+    assert "永远不预选" not in source
+
+
+def test_unverified_repair_offers_explicit_host_verification_consent() -> None:
+    source = APP_JS
+
+    assert "data-allow-host-verification" in source
+    assert "我理解风险，在本机运行测试" in source
+    assert "canRequestHostVerification" in source
+    assert "return { status, detail, reason }" in source
+    assert "window.confirm('本机验证会执行这个仓库里的测试代码" in source
+    assert "JSON.stringify({ allow_host_verification: true })" in source
+
+
 def test_repair_ux_exposes_real_phases_verification_and_data_boundary() -> None:
     source = APP_JS
     shell_source = (ROOT / "src/web_ui.py").read_text(encoding="utf-8")
