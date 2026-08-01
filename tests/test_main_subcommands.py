@@ -9,7 +9,50 @@ from unittest.mock import patch
 
 import yaml
 
-from src.main import main, show_latest, _safe_local_directory
+from src.main import (
+    _safe_local_directory,
+    _write_config_repositories,
+    main,
+    show_latest,
+)
+
+
+class RepositoryConfigPersistenceTest(unittest.TestCase):
+    def test_repository_list_write_is_canonical_atomic_and_private(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / ".ghe" / "config.yml"
+            target.parent.mkdir(parents=True)
+            target.write_text(
+                "model:\n  provider: codex_cli\nrepos:\n  - old/repository\n",
+                encoding="utf-8",
+            )
+
+            written = _write_config_repositories(
+                target,
+                ["old/repository", "new/repository", "new/repository", "invalid"],
+            )
+
+            self.assertEqual(written, ["old/repository", "new/repository"])
+            payload = yaml.safe_load(target.read_text(encoding="utf-8"))
+            self.assertEqual(payload["repos"], written)
+            self.assertEqual(payload["model"], {"provider": "codex_cli"})
+            self.assertEqual(target.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(list(target.parent.glob(".config.yml.*.tmp")), [])
+
+    def test_repository_list_write_does_not_replace_invalid_config(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / "config.yml"
+            original = "repos: [unterminated\n"
+            target.write_text(original, encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "could not safely read"):
+                _write_config_repositories(target, ["new/repository"])
+
+            self.assertEqual(target.read_text(encoding="utf-8"), original)
 
 
 class ShowLatestSubcommandTest(unittest.TestCase):

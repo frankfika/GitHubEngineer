@@ -170,6 +170,12 @@ class ServeSubcommandTest(unittest.TestCase):
         status, headers, body = _http_get(self.port, "/healthz")
         self.assertEqual(status, 200)
         self.assertEqual(headers.get("Content-Type"), "application/json")
+        self.assertEqual(headers.get("Cache-Control"), "no-store")
+        self.assertEqual(headers.get("X-Content-Type-Options"), "nosniff")
+        self.assertEqual(headers.get("X-Frame-Options"), "DENY")
+        self.assertEqual(headers.get("Referrer-Policy"), "no-referrer")
+        self.assertEqual(headers.get("Cross-Origin-Resource-Policy"), "same-origin")
+        self.assertNotIn("Python", headers.get("Server", ""))
         payload = json.loads(body)
         self.assertEqual(payload["status"], "ok")
 

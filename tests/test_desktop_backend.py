@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
 
 from src import desktop_backend
 from src.main import _record_repair_worker_crash, _repair_worker_argv
@@ -88,3 +89,16 @@ def test_crashed_worker_cannot_leave_task_queued_forever(tmp_path) -> None:
     assert payload["status"] == "failed"
     assert payload["message"] == "Repair worker exited unexpectedly (code 2)."
     assert payload["updated_at"]
+
+
+def test_run_action_verifies_the_packaged_app_without_accepting_a_stale_port() -> None:
+    script = (
+        Path(__file__).resolve().parents[1] / "script" / "build_and_run.sh"
+    ).read_text(encoding="utf-8")
+
+    assert 'npm run desktop:build >"$LOG_FILE" 2>&1' in script
+    assert '/usr/bin/open -na "$APP_BUNDLE"' in script
+    assert "Packaged backend health check passed after the stability window" in script
+    assert "Port 8765 is already used by an unrelated process" in script
+    assert "Refusing to report a stale service as this build" in script
+    assert "nohup npm run desktop" not in script

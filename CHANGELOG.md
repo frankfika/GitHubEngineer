@@ -60,6 +60,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Brief and decision pages now refresh the shared repository/account state,
+  and their repository links navigate normally instead of being swallowed by
+  the home-only Issue loader.
+- Code review falls back to an escaped, offline plain-text diff when the
+  optional enhanced editor cannot load; hunk decisions and publish gates stay
+  available.
+- Repositories added from the UI are atomically persisted to the canonical
+  top-level `repos:` configuration instead of the deprecated watched file.
+- Local service responses now disable caching, framing, content sniffing, and
+  referrer leakage, and no longer expose the host Python version.
 - Quitting or closing the desktop app now terminates the entire embedded
   backend process group, including the PyInstaller child process, so port 8765
   is not left occupied by an orphaned server.
@@ -77,10 +87,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 
-- 68 pytest tests (was 8). New files: `test_github_client.py`,
-  `test_llm_client.py`, `test_analyzer.py`, `test_delegation.py`,
-  `test_history.py`, `test_main_subcommands.py`, `test_performance_50_issues.py`.
-  `test_report_generator.py` grew from one to four cases.
+- 367 pytest tests cover the CLI, GitHub/LLM clients, web APIs, desktop
+  assets, repair lifecycle, security gates, persistence, and failure recovery.
 
 ## [0.1.0] - 2026-07-21
 
