@@ -35,7 +35,7 @@ def _free_port() -> int:
         return sock.getsockname()[1]
 
 
-def _wait_for_server(port: int, host: str = "127.0.0.1", deadline: float = 10.0) -> None:
+def _wait_for_server(port: int, host: str = "127.0.0.1", deadline: float = 20.0) -> None:
     started = time.monotonic()
     while time.monotonic() - started < deadline:
         with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as sock:
@@ -102,7 +102,6 @@ class ServeSubcommandTest(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        cls.port = _free_port()
         cls._process: subprocess.Popen | None = None
 
     @classmethod
@@ -119,6 +118,9 @@ class ServeSubcommandTest(unittest.TestCase):
     def setUp(self):
         # Each test starts a fresh server so the in-process decision
         # memory changes from POST /decisions do not leak across tests.
+        # Use a fresh port as well: fast macOS runners can briefly retain the
+        # previous listener while the next Python process imports dependencies.
+        self.port = _free_port()
         env = os.environ.copy()
         env["GHE_SERVE_PORT"] = str(self.port)
         env["PYTHONPATH"] = str(Path(__file__).resolve().parent.parent)
@@ -138,7 +140,16 @@ class ServeSubcommandTest(unittest.TestCase):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
-        _wait_for_server(self.port)
+        try:
+            _wait_for_server(self.port)
+        except Exception:
+            self._process.kill()
+            stdout, stderr = self._process.communicate(timeout=5)
+            self._process = None
+            raise RuntimeError(
+                "test server failed to start:\n"
+                + (stderr or stdout).decode("utf-8", errors="replace")[-2000:]
+            )
 
     def tearDown(self):
         if self._process is not None and self._process.poll() is None:

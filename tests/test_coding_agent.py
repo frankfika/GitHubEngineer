@@ -758,9 +758,10 @@ class GetProviderTest(unittest.TestCase):
         self.assertEqual(provider.model, "claude-sonnet-4-5")
 
     def test_claude_cli_returns_correct_provider(self) -> None:
-        provider = get_provider(
-            {"coding_agent": {"provider": "claude_cli"}}
-        )
+        with patch(
+            "src.process_runtime.find_desktop_executable", return_value="/usr/bin/claude"
+        ):
+            provider = get_provider({"coding_agent": {"provider": "claude_cli"}})
         self.assertIsInstance(provider, ClaudeCLIProvider)
         self.assertEqual(provider.name(), "claude_cli")
 
