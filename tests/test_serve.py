@@ -35,7 +35,25 @@ def _free_port() -> int:
         return sock.getsockname()[1]
 
 
-def _wait_for_server(port: int, host: str = "127.0.0.1", deadline: float = 10.0) -> None:
+def _server_env(port: int) -> dict[str, str]:
+    env = os.environ.copy()
+    env["GHE_SERVE_PORT"] = str(port)
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parent.parent)
+    # pytest-cov auto-instruments subprocesses through these variables.
+    # GitHub's macOS runners take tens of seconds to import the application
+    # under child-process tracing; Ubuntu still records that coverage.
+    if sys.platform == "darwin" and env.get("CI"):
+        for name in (
+            "COV_CORE_SOURCE",
+            "COV_CORE_CONFIG",
+            "COV_CORE_DATAFILE",
+            "COV_CORE_BRANCH",
+        ):
+            env.pop(name, None)
+    return env
+
+
+def _wait_for_server(port: int, host: str = "127.0.0.1", deadline: float = 60.0) -> None:
     started = time.monotonic()
     while time.monotonic() - started < deadline:
         with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as sock:
@@ -103,7 +121,38 @@ class ServeSubcommandTest(unittest.TestCase):
             encoding="utf-8",
         )
         cls.port = _free_port()
-        cls._process: subprocess.Popen | None = None
+        cls._server_log = (cls.directory / "server.log").open("w+b")
+        cls._process: subprocess.Popen | None = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "src.main",
+                "--config",
+                str(cls.config_path),
+                "--serve",
+                "--serve-host",
+                "127.0.0.1",
+            ],
+            cwd=str(cls.directory),
+            env=_server_env(cls.port),
+            stdout=cls._server_log,
+            stderr=subprocess.STDOUT,
+        )
+        try:
+            _wait_for_server(cls.port)
+        except Exception:
+            cls._process.kill()
+            cls._process.wait(timeout=5)
+            cls._process = None
+            cls._server_log.flush()
+            cls._server_log.seek(0)
+            output = cls._server_log.read()
+            cls._server_log.close()
+            cls._temp_dir.cleanup()
+            raise RuntimeError(
+                "test server failed to start:\n"
+                + output.decode("utf-8", errors="replace")[-2000:]
+            )
 
     @classmethod
     def tearDownClass(cls):
@@ -114,41 +163,8 @@ class ServeSubcommandTest(unittest.TestCase):
             except subprocess.TimeoutExpired:
                 cls._process.kill()
                 cls._process.wait()
+        cls._server_log.close()
         cls._temp_dir.cleanup()
-
-    def setUp(self):
-        # Each test starts a fresh server so the in-process decision
-        # memory changes from POST /decisions do not leak across tests.
-        env = os.environ.copy()
-        env["GHE_SERVE_PORT"] = str(self.port)
-        env["PYTHONPATH"] = str(Path(__file__).resolve().parent.parent)
-        self._process = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "src.main",
-                "--config",
-                str(self.config_path),
-                "--serve",
-                "--serve-host",
-                "127.0.0.1",
-            ],
-            cwd=str(self.directory),
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        _wait_for_server(self.port)
-
-    def tearDown(self):
-        if self._process is not None and self._process.poll() is None:
-            self._process.send_signal(signal.SIGINT)
-            try:
-                self._process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self._process.kill()
-                self._process.wait()
-            self._process = None
 
     def test_healthz_returns_ok(self):
         status, headers, body = _http_get(self.port, "/healthz")
@@ -173,9 +189,6 @@ class ServeSubcommandTest(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        env = os.environ.copy()
-        env["GHE_SERVE_PORT"] = str(port)
-        env["PYTHONPATH"] = str(Path(__file__).resolve().parent.parent)
         process = subprocess.Popen(
             [
                 sys.executable,
@@ -188,7 +201,7 @@ class ServeSubcommandTest(unittest.TestCase):
                 "127.0.0.1",
             ],
             cwd=str(self.directory),
-            env=env,
+            env=_server_env(port),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
@@ -847,7 +860,8 @@ class ServeSubcommandTest(unittest.TestCase):
             self.assertEqual(response.status, 200)
             self.assertIn("text/html", response.headers.get("Content-Type", ""))
             body = response.read().decode("utf-8")
-        self.assertIn("<h1>GitHub Engineer</h1>", body)
+        self.assertIn('<span class="brand-title">GitHub Engineer</span>', body)
+        self.assertIn("<h1 id='active-repo-heading'", body)
         self.assertIn("acme_widgets_20260721.md", body)
 
     def test_ui_brief_renders_markdown_as_html(self):

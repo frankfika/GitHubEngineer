@@ -36,6 +36,7 @@ from unittest.mock import patch
 from src.coding_agent import (
     AnthropicProvider,
     ClaudeCLIProvider,
+    CodexCLIProvider,
     CodingAgentConfigError,
     CodingAgentProvider,
     CodingAgentResult,
@@ -757,11 +758,20 @@ class GetProviderTest(unittest.TestCase):
         self.assertEqual(provider.model, "claude-sonnet-4-5")
 
     def test_claude_cli_returns_correct_provider(self) -> None:
-        provider = get_provider(
-            {"coding_agent": {"provider": "claude_cli"}}
-        )
+        with patch(
+            "src.process_runtime.find_desktop_executable", return_value="/usr/bin/claude"
+        ):
+            provider = get_provider({"coding_agent": {"provider": "claude_cli"}})
         self.assertIsInstance(provider, ClaudeCLIProvider)
         self.assertEqual(provider.name(), "claude_cli")
+
+    def test_codex_cli_returns_correct_provider(self) -> None:
+        with patch.object(CodexCLIProvider, "_works", return_value=True), patch(
+            "src.process_runtime.find_desktop_executable", return_value="/usr/bin/codex"
+        ):
+            provider = get_provider({"coding_agent": {"provider": "codex_cli"}})
+        self.assertIsInstance(provider, CodexCLIProvider)
+        self.assertEqual(provider.name(), "codex_cli")
 
     def test_default_provider_is_openai_compatible(self) -> None:
         """Omitting ``provider`` falls back to ``openai_compatible``."""
@@ -785,9 +795,13 @@ class GetProviderTest(unittest.TestCase):
             ("openai", OpenAICompatibleProvider),
             ("claude-code", ClaudeCLIProvider),
             ("claude", ClaudeCLIProvider),
+            ("codex", CodexCLIProvider),
         ]:
             with self.subTest(alias=alias):
-                provider = get_provider({"coding_agent": {"provider": alias}})
+                with patch.object(CodexCLIProvider, "_works", return_value=True), patch(
+                    "src.process_runtime.find_desktop_executable", return_value="/usr/bin/codex"
+                ):
+                    provider = get_provider({"coding_agent": {"provider": alias}})
                 self.assertIsInstance(provider, expected_cls)
 
     def test_missing_section_raises_clear_error(self) -> None:
@@ -994,6 +1008,39 @@ class DiagnoseNewErrorKindsTest(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # ClaudeCLIProvider -- subprocess classification.
 # ---------------------------------------------------------------------------
+
+
+class CodexCLIProviderTest(unittest.TestCase):
+    def test_health_check_requires_login_status(self) -> None:
+        with patch.object(CodexCLIProvider, "_works", return_value=True):
+            provider = CodexCLIProvider(executable="/usr/bin/codex")
+        with patch("src.coding_agent.subprocess.run") as run:
+            run.return_value = SimpleNamespace(
+                returncode=0, stdout="Logged in using ChatGPT\n", stderr=""
+            )
+            self.assertTrue(provider.health_check())
+        run.assert_called_once_with(
+            ["/usr/bin/codex", "login", "status"],
+            text=True,
+            capture_output=True,
+            timeout=10,
+            shell=False,
+        )
+
+    def test_run_uses_workspace_write_and_stdin(self) -> None:
+        with patch.object(CodexCLIProvider, "_works", return_value=True):
+            provider = CodexCLIProvider(executable="/usr/bin/codex")
+        with tempfile.TemporaryDirectory() as temp_dir, patch(
+            "src.coding_agent.subprocess.run"
+        ) as run:
+            run.return_value = SimpleNamespace(returncode=0, stdout="done", stderr="")
+            result = provider.run("fix it", Path(temp_dir))
+        self.assertTrue(result.ok)
+        kwargs = run.call_args.kwargs
+        self.assertEqual(kwargs["input"], "fix it")
+        self.assertEqual(kwargs["cwd"], temp_dir)
+        self.assertIn("workspace-write", run.call_args.args[0])
+        self.assertEqual(run.call_args.args[0][-1], "-")
 
 
 class ClaudeCLIErrorClassificationTest(unittest.TestCase):

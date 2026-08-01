@@ -4,7 +4,7 @@ import subprocess
 from datetime import datetime, timezone
 from typing import Any
 
-from github import Github, GithubException, RateLimitExceededException
+from github import Auth, Github, GithubException, RateLimitExceededException
 
 from .process_runtime import find_desktop_executable, safe_subprocess_env
 
@@ -17,7 +17,7 @@ class GitHubClient:
     """Small wrapper around PyGithub for read-only issue access."""
 
     def __init__(self, token: str | None, repo_full_name: str):
-        self.gh = Github(token) if token else Github()
+        self.gh = Github(auth=Auth.Token(token)) if token else Github()
         try:
             self.repo = self.gh.get_repo(repo_full_name)
         except GithubException as exc:
@@ -63,7 +63,7 @@ class GitHubClient:
                 "GitHub login is required. Run `gh auth login` or set GITHUB_TOKEN."
             )
         try:
-            github = Github(token)
+            github = Github(auth=Auth.Token(token))
             user = github.get_user()
             repositories = user.get_repos(
                 affiliation="owner",
@@ -121,7 +121,7 @@ class GitHubClient:
                 "GitHub login is required. Run `gh auth login` or set GITHUB_TOKEN."
             )
         try:
-            return str(Github(token).get_user().login)
+            return str(Github(auth=Auth.Token(token)).get_user().login)
         except RateLimitExceededException as exc:
             raise GitHubClientError("GitHub API rate limit exceeded.") from exc
         except GithubException as exc:

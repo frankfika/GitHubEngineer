@@ -39,11 +39,16 @@ case "$MODE" in
     /usr/bin/log stream --info --style compact --predicate "process == \"$APP_NAME\""
     ;;
   --verify|verify)
-    run_desktop >"$LOG_FILE" 2>&1 &
+    # Detach the dev launcher so the app and its Python sidecar survive this
+    # verification shell exiting. A process-only check was racy: Tauri could
+    # appear briefly while the backend had not started (or had already died).
+    nohup npm run desktop >"$LOG_FILE" 2>&1 </dev/null &
     LAUNCHER_PID=$!
     for _ in $(seq 1 1800); do
-      if pgrep -x "$APP_NAME" >/dev/null 2>&1; then
+      if pgrep -x "$APP_NAME" >/dev/null 2>&1 \
+        && curl --fail --silent --max-time 2 http://127.0.0.1:8765/healthz >/dev/null; then
         echo "GitHub Engineer desktop app is running."
+        echo "Backend health check passed."
         echo "launcher pid: $LAUNCHER_PID"
         echo "log: $LOG_FILE"
         exit 0

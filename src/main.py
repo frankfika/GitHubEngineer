@@ -34,7 +34,7 @@ from .history import (
     record_from_brief,
     save_history,
 )
-from .llm_client import LLMClient, LLMClientError
+from .llm_client import LLMClient, LLMClientError, create_llm_client
 from .memory_manager import DecisionMemory, DecisionMemoryError
 from .models import DecisionRecord, IssueMetrics, MaintainerBrief
 from .report_generator import ReportGenerator
@@ -641,11 +641,7 @@ def main() -> int:
 
         github_token = config.get("github", {}).get("token") or os.getenv("GITHUB_TOKEN")
         model_config = config["model"]
-        llm_client = LLMClient(
-            model_config.get("base_url"),
-            model_config["api_key"],
-            model_config["model_name"],
-        )
+        llm_client = create_llm_client(model_config)
         history_dir = os.getenv("GHE_HISTORY_DIR", ".ghe/history")
         if not _safe_local_directory(history_dir):
             print(
@@ -1236,7 +1232,7 @@ def init_config() -> int:
     print()
     print("  2. Configure your coding agent (so automatic repair can run):")
     print("     ghe --configure-coding-agent")
-    print("     # Pick OpenAI-compatible / Anthropic / Claude CLI;")
+    print("     # Pick Codex CLI / OpenAI-compatible / Anthropic / Claude CLI;")
     print("     # provide base_url / api_key / model as needed.")
     print()
     print("  3. Verify configuration:")
@@ -1255,6 +1251,11 @@ def init_config() -> int:
 #: to *choose* rather than accept the placeholder; the ``[sk-...]`` and
 #: ``[model-name]`` strings make the placeholder shape obvious.
 _CODING_AGENT_PROVIDER_CHOICES: "tuple[tuple[str, str, str], ...]" = (
+    (
+        "codex_cli",
+        "Codex CLI (uses your local Codex / ChatGPT login)",
+        "",
+    ),
     (
         "openai_compatible",
         "OpenAI-compatible (OpenAI / DeepSeek / OpenRouter / Ollama / vLLM / any self-hosted)",
@@ -1336,8 +1337,8 @@ def configure_coding_agent(args: "argparse.Namespace | None" = None) -> int:
       if non-empty), and ``model`` (default ``gpt-4o``).
     * ``anthropic`` -- asks for ``api_key`` and ``model`` (default
       ``claude-sonnet-4-5``).
-    * ``claude_cli`` -- no extra fields; the provider resolves the
-      ``claude`` binary at run time.
+    * ``codex_cli`` / ``claude_cli`` -- no extra fields; the provider
+      resolves the local CLI binary at run time.
 
     Returns ``0`` on success, ``1`` when the user already has a config
     and chose not to overwrite, ``2`` when stdin is non-interactive
@@ -1397,7 +1398,7 @@ def configure_coding_agent(args: "argparse.Namespace | None" = None) -> int:
             default=os.getenv("ANTHROPIC_API_KEY", ""),
         )
         section["model"] = _prompt("model", default="claude-sonnet-4-5")
-    elif provider_name == "claude_cli":
+    elif provider_name in {"codex_cli", "claude_cli"}:
         # Nothing to ask -- the provider looks up the binary on PATH
         # (or in `~/.claude/local/`) at run time.
         pass
@@ -2074,9 +2075,10 @@ def serve(args: argparse.Namespace) -> int:
             "openai": "openai_compatible",
             "openai-compatible": "openai_compatible",
             "claude-cli": "claude_cli",
+            "codex-cli": "codex_cli",
         }
         provider = aliases.get(provider, provider)
-        if provider not in {"openai_compatible", "anthropic", "claude_cli"}:
+        if provider not in {"openai_compatible", "anthropic", "codex_cli", "claude_cli"}:
             return None, "unsupported coding_agent provider"
         section: dict[str, object] = {"provider": provider}
         model = str(payload.get("model") or "").strip()
@@ -2084,7 +2086,7 @@ def serve(args: argparse.Namespace) -> int:
         api_key = str(payload.get("api_key") or "").strip()
         if len(model) > 200 or len(base_url) > 2_000 or len(api_key) > 8_000:
             return None, "coding_agent field is too long"
-        if provider != "claude_cli":
+        if provider not in {"codex_cli", "claude_cli"}:
             if not model:
                 return None, "model is required"
             section["model"] = model

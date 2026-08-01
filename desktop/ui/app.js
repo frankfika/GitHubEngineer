@@ -225,7 +225,7 @@
     if (isDemoRepair(job)) {
       return 'fake 只生成演示数据，不会真正理解或修复仓库；演示任务禁止创建 Draft PR。';
     }
-    if (provider === 'claude_cli' || provider.includes('local') || provider.includes('ollama')) {
+    if (provider === 'codex_cli' || provider === 'claude_cli' || provider.includes('local') || provider.includes('ollama')) {
       return '当前 Provider 在本机处理仓库内容；是否产生外部请求取决于该本地工具自身的配置。';
     }
     return '使用 API Provider 时，Issue 内容与为定位问题选取的仓库源码片段会发送给所配置的模型服务。请确认仓库数据允许发送。';
@@ -2146,6 +2146,7 @@
   const CODING_AGENT_MODEL_PRESETS = {
     openai_compatible: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'deepseek-chat', 'qwen-coder', 'custom'],
     anthropic: ['claude-sonnet-4-5', 'claude-haiku-4-5', 'claude-opus-4-1', 'custom'],
+    codex_cli: ['codex-default'],
     claude_cli: ['claude-code-default', 'custom'],
     custom: ['custom'],
   };
@@ -2172,19 +2173,24 @@
     const baseUrlRow = codingAgentDialog.querySelector('[data-coding-agent-row="base-url"]');
     if (baseUrlRow) baseUrlRow.hidden = !(provider === 'openai_compatible' || provider === 'custom');
     const apiKeyRow = codingAgentDialog.querySelector('[data-coding-agent-row="api-key"]');
-    if (apiKeyRow) apiKeyRow.hidden = (provider === 'claude_cli');
+    if (apiKeyRow) apiKeyRow.hidden = (provider === 'codex_cli' || provider === 'claude_cli');
     if (codingAgentModels) {
       const presets = CODING_AGENT_MODEL_PRESETS[provider] || ['custom'];
       codingAgentModels.innerHTML = presets
         .map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`)
         .join('');
+      if (codingAgentModel && !codingAgentModel.value.trim() && presets[0] !== 'custom') {
+        codingAgentModel.value = presets[0];
+      }
     }
     if (codingAgentDataBoundary) {
       codingAgentDataBoundary.textContent = provider === 'fake'
         ? 'fake 是演示 Provider：不会真正理解或修复仓库，产生的演示变更禁止创建 Draft PR。'
-        : (provider === 'claude_cli'
+        : (provider === 'codex_cli'
+          ? 'Codex CLI 在本机隔离工作区读取和修改代码；它是否向外发送内容取决于 Codex CLI 自身配置。'
+          : (provider === 'claude_cli'
           ? 'Claude CLI 在本机工作区读取和修改代码；它是否向外发送内容取决于 Claude CLI 自身配置。'
-          : 'API Provider 会接收 Issue 内容与为定位问题选取的仓库源码片段。请确认仓库数据允许发送给该模型服务。');
+          : 'API Provider 会接收 Issue 内容与为定位问题选取的仓库源码片段。请确认仓库数据允许发送给该模型服务。'));
     }
   };
 
@@ -2238,8 +2244,8 @@
       if (!codingAgentProvider?.value) return '请选择一个 provider';
     } else if (step === 1) {
       const provider = String(codingAgentProvider?.value || '');
-      if (provider !== 'claude_cli' && !codingAgentApiKey?.value?.trim()) {
-        return '请填 API key (或换 claude_cli provider)';
+      if (!['codex_cli', 'claude_cli'].includes(provider) && !codingAgentApiKey?.value?.trim()) {
+        return '请填 API key（Codex CLI / Claude CLI 不需要 key）';
       }
     } else if (step === 2) {
       if (!codingAgentModel?.value?.trim()) return '请选或填一个 model';
@@ -2416,7 +2422,9 @@
       return;
     }
     if (event.target.closest('[data-copy-claude-login]')) {
-      const command = 'claude auth login';
+      const command = currentCodingAgent?.provider === 'claude_cli'
+        ? 'claude auth login'
+        : 'codex login';
       navigator.clipboard?.writeText(command)
         .then(() => showToast('已复制。请在终端粘贴运行，然后回到这里重新检查'))
         .catch(() => showToast(command));

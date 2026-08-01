@@ -63,7 +63,7 @@ verify: install-dev ## Run everything: tests + lint + YAML checks + build + dry-
 	@echo "==> 4/6 build sdist + wheel"
 	$(BIN)/python -m build
 	@echo "==> 5/6 twine check"
-	$(BIN)/twine check dist/*
+	$(BIN)/twine check dist/*.whl dist/*.tar.gz
 	@echo "==> 6/6 end-to-end dry run"
 	$(BIN)/python benchmarks/dry_run.py
 	@echo ""

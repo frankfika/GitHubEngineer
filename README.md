@@ -15,7 +15,7 @@ The brief is a single Markdown file. The decision memory is one YAML file. The h
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![Status: Production/Stable](https://img.shields.io/badge/status-stable-green.svg)](pyproject.toml)
-[![Tests: 153 passing](https://img.shields.io/badge/tests-153%20passing-brightgreen.svg)](tests/)
+[![Tests: 346 passing](https://img.shields.io/badge/tests-346%20passing-brightgreen.svg)](tests/)
 [![CI: GitHub Actions](https://img.shields.io/badge/CI-GitHub%20Actions-blue.svg)](.github/workflows/test.yml)
 [![LLM: OpenAI-compatible](https://img.shields.io/badge/LLM-OpenAI%20compatible-7c3aed.svg)](#model)
 
@@ -98,7 +98,7 @@ Five commands from clone to first brief. No token, no proxy, no daemon.
 
 ```bash
 # 1. Clone and create a virtual environment
-git clone https://github.com/your-org/github-engineer.git
+git clone https://github.com/frankfika/GitHubEngineer.git
 cd github-engineer
 make venv && make install-dev
 
@@ -900,9 +900,27 @@ There are three ways to land a `coding_agent:` block in `.ghe/config.yml`:
 
 All three paths converge on the same parser in `src/coding_agent.py::get_provider(config)`. Whatever shape you choose, the worker sees a single `CodingAgentProvider` instance.
 
-### §F.3 The three providers
+### §F.3 The four providers
 
-#### §F.3.1 `openai_compatible` — default, recommended
+#### §F.3.1 `codex_cli` — desktop default, recommended
+
+Uses the locally authenticated Codex CLI (including the Codex desktop app's
+ChatGPT login), so neither brief generation nor automatic repair needs a
+separate API key. Briefs run read-only; repairs run in an isolated writable
+workspace and still require verification and maintainer review before publish.
+
+```yaml
+model:
+  provider: codex_cli
+  model_name: codex-default
+coding_agent:
+  provider: codex_cli
+```
+
+Run `codex login` once if `ghe --doctor` reports that the local session is not
+authenticated. Headless servers can use `openai_compatible` instead.
+
+#### §F.3.2 `openai_compatible` — API and self-hosted models
 
 Any `POST {base_url}/chat/completions` endpoint that takes a Bearer key. Covers OpenAI, DeepSeek, OpenRouter, Ollama, vLLM, LM Studio, and every other server that follows the OpenAI Chat Completions schema. Empty `api_key` is allowed (substituted with the placeholder `not-required`) so local Ollama works without auth.
 
@@ -925,7 +943,7 @@ coding_agent:
 | **vLLM** (local) | `http://localhost:8000/v1` | `not-required` | (whatever you started vLLM with) |
 | **LM Studio** (local) | `http://localhost:1234/v1` | `not-required` | (whatever you loaded) |
 
-#### §F.3.2 `anthropic` — first-party Messages API
+#### §F.3.3 `anthropic` — first-party Messages API
 
 The official `POST https://api.anthropic.com/v1/messages` endpoint. Use this when you have a Claude.ai / Anthropic API key and want first-party access (better rate limits, prompt caching, no middleman).
 
@@ -939,9 +957,12 @@ coding_agent:
 
 The provider uses `x-api-key: ...` + `anthropic-version: 2023-06-01` headers and reads the text out of `content[].text` blocks. Non-text blocks (tool_use, etc.) are ignored — see §F.5 for the MVP rationale.
 
-#### §F.3.3 `claude_cli` — legacy fallback
+#### §F.3.4 `claude_cli` — legacy fallback
 
-Shells out to `claude --bare` (resolved via `src.process_runtime.find_desktop_executable`, which knows about `/opt/homebrew/bin` and `~/.claude/local` on macOS). Use this only when you already have Claude Code CLI authenticated and you want zero config.
+Shells out to the authenticated `claude` CLI (resolved via
+`src.process_runtime.find_desktop_executable`, which knows about
+`/opt/homebrew/bin` and `~/.claude/local` on macOS). Use this when you already
+have Claude Code authenticated and want zero API-key configuration.
 
 ```yaml
 coding_agent:
@@ -949,7 +970,8 @@ coding_agent:
   # No base_url / api_key / model needed.
 ```
 
-The fallback is preserved so existing users don't break, but new users should default to `openai_compatible` — see §F.7 for the migration path.
+The fallback is preserved so existing users don't break; new desktop users
+default to `codex_cli`.
 
 ### §F.4 Self-hosting guide (local models)
 

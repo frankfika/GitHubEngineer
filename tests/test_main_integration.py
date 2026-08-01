@@ -92,12 +92,14 @@ class MainIntegrationTest(unittest.TestCase):
                 sys.argv = ["ghe", "--config", str(config_path)]
                 os.environ["GITHUB_STEP_SUMMARY"] = str(summary_path)
                 with patch("src.main.GitHubClient", return_value=github) as github_class, patch(
-                    "src.main.LLMClient", return_value=llm
+                    "src.main.create_llm_client", return_value=llm
                 ) as llm_class:
                     self.assertEqual(main(), 0)
 
                 github_class.assert_called_once_with("test-token", "acme/widgets")
-                llm_class.assert_called_once_with(None, "test-key", "test-model")
+                llm_class.assert_called_once_with(
+                    {"api_key": "test-key", "model_name": "test-model"}
+                )
                 github.get_open_issues.assert_called_once()
                 llm.generate_json.assert_called_once()
 
@@ -130,7 +132,7 @@ class MainIntegrationTest(unittest.TestCase):
             try:
                 sys.argv = ["ghe", "--config", str(config_path)]
                 with patch("src.main.GitHubClient", return_value=github), patch(
-                    "src.main.LLMClient", return_value=llm
+                    "src.main.create_llm_client", return_value=llm
                 ):
                     self.assertEqual(main(), 0)
 
@@ -161,7 +163,7 @@ class MainIntegrationTest(unittest.TestCase):
                 llm = Mock()
                 llm.generate_json.side_effect = LLMClientError("model unavailable")
                 with patch("src.main.GitHubClient", return_value=github), patch(
-                    "src.main.LLMClient", return_value=llm
+                    "src.main.create_llm_client", return_value=llm
                 ), patch("sys.stderr") as stderr:
                     self.assertEqual(main(), 1)
                 llm_error = "".join(call.args[0] for call in stderr.write.call_args_list)

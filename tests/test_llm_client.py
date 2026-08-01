@@ -6,12 +6,13 @@ content, and JSON recovery paths without a real LLM.
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 from openai import APIError, APITimeoutError
 
-from src.llm_client import LLMClient, LLMClientError
+from src.llm_client import CodexLLMClient, LLMClient, LLMClientError, create_llm_client
 
 
 def _build_response(content: str):
@@ -117,6 +118,30 @@ def test_generate_json_rejects_top_level_non_object():
     with pytest.raises(LLMClientError) as exc:
         client.generate_json("ping")
     assert "must be an object" in str(exc.value)
+
+
+@patch("src.coding_agent.CodexCLIProvider")
+def test_codex_client_captures_final_message(mock_provider, tmp_path, monkeypatch):
+    executable = tmp_path / "codex"
+    executable.write_text("", encoding="utf-8")
+    mock_provider.return_value.executable = str(executable)
+
+    def fake_run(command, **kwargs):
+        output_path = command[command.index("--output-last-message") + 1]
+        Path(output_path).write_text('{"ok": true}', encoding="utf-8")
+        result = MagicMock(returncode=0, stdout="events", stderr="")
+        return result
+
+    monkeypatch.setattr("src.llm_client.subprocess.run", fake_run)
+    client = CodexLLMClient()
+    assert client.generate_json("Return JSON") == {"ok": True}
+
+
+@patch("src.llm_client.CodexLLMClient")
+def test_factory_builds_codex_without_api_key(mock_codex):
+    result = create_llm_client({"provider": "codex_cli"})
+    assert result is mock_codex.return_value
+    mock_codex.assert_called_once_with(model_name=None)
 
 
 if __name__ == "__main__":

@@ -31,7 +31,8 @@ def test_pull_request_url_returns_empty_when_cli_has_no_url():
     assert _pull_request_url("no pull request was created") == ""
 
 
-def test_external_repair_uses_isolated_agent_and_fork_pr(tmp_path):
+def test_external_repair_uses_isolated_agent_and_fork_pr(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     job_path = tmp_path / "job.json"
     workspace = tmp_path / "workspace"
     job_path.write_text(
@@ -104,6 +105,10 @@ def test_external_repair_uses_isolated_agent_and_fork_pr(tmp_path):
         # a real .ghe/config.yml on disk.
         patch("src.repair_worker.has_provider_config", return_value=True),
         patch("src.repair_worker.get_provider", return_value=_FakeProvider()),
+        patch(
+            "src.repair_worker._load_worker_config",
+            return_value={"coding_agent": {"provider": "test_provider"}},
+        ),
         patch(
             "src.repair_worker._verify_changes",
             return_value={

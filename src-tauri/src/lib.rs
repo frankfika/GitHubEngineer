@@ -43,6 +43,29 @@ pub fn run() {
                     format!("could not create application data directory: {error}")
                 })?;
                 let config = data_dir.join(".ghe").join("config.yml");
+                if !config.exists() {
+                    let config_directory = config
+                        .parent()
+                        .ok_or_else(|| "desktop config has no parent directory".to_string())?;
+                    std::fs::create_dir_all(config_directory).map_err(|error| {
+                        format!("could not create desktop config directory: {error}")
+                    })?;
+                    // A fresh desktop install should be useful without asking
+                    // for an API key that the user may not have. Both model
+                    // paths reuse the authenticated local Codex/ChatGPT login;
+                    // the UI can switch providers later without overwriting
+                    // this file behind the user's back.
+                    std::fs::write(
+                        &config,
+                        "model:\n  provider: codex_cli\n  model_name: codex-default\n\n\
+                         github:\n  token: ${GITHUB_TOKEN}\n\n\
+                         coding_agent:\n  provider: codex_cli\n\n\
+                         output:\n  format: markdown\n  output_dir: reports\n  title: 'Maintainer Brief - {date}'\n\n\
+                         analysis:\n  lookback_days: 7\n  top_n: 3\n  min_issue_age_hours: 24\n  max_issues_for_llm: 50\n\n\
+                         repair:\n  allow_host_verification: false\n",
+                    )
+                    .map_err(|error| format!("could not write desktop starter config: {error}"))?;
+                }
                 let child = Command::new(backend)
                     .arg("--serve")
                     .args(["--serve-host", "127.0.0.1"])
