@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Production desktop release path.** A pinned GitHub Actions workflow now
+  tests and builds both Apple Silicon and Intel macOS bundles, and can sign,
+  notarize, and publish a release when Apple Developer credentials are
+  configured. The packaged app enables the hardened runtime with the minimum
+  entitlement required by its embedded Python sidecar.
+- **Explicit host verification.** When an isolated container runtime is not
+  available, a repair can be re-verified on the host only after a per-task
+  risk confirmation. Verification remains fail-closed, and a failed test run
+  still prevents publishing.
+- **Packaged repair workers.** Frozen desktop builds can now launch start,
+  revise, verify, and publish workers through an internal worker entry point.
+  Unexpected worker exits are persisted instead of leaving jobs queued
+  forever.
 - **Trend baseline.** `src/history.py` saves each brief as a versioned JSON
   snapshot under `.ghe/history/` and computes a week-over-week diff
   (new / resolved / score-shifted issues, new / dropped clusters). The diff is
@@ -34,14 +47,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   / `test` / `test-fast` / `lint` / `smoke` / `clean` targets. `README.md`
   adds a cost estimate and a multi-repo config example. `examples/sample_report.md`
   is now a real-shape brief, not a placeholder.
-- **Idle-by-default repo fetching.** The assistant page no longer auto-fetches
-  issues at startup. The heading and permission banner now read
-  "已配置 X · 未监控" until the user explicitly clicks "开始监控这个仓库".
-  Empty / failed loadIssues rolls the heading back to a clear
-  "X · 读取失败" / "还没有添加仓库" state instead of leaving "正在读取 X" on
-  screen forever. Sidebar pills show green "我的" / amber "外部" tags so
-  maintainers can tell at a glance which repos accept AI-modified PRs and
-  which only get fork-based contributions.
+- **Repository startup restoration.** The assistant restores the last valid
+  repository selection, falls back to the backend default or first tracked
+  repository, and loads its issue inbox immediately. Empty / failed loads
+  still show clear onboarding or retry states. Sidebar pills show green
+  "我的" / amber "外部" tags so maintainers can distinguish owner and fork
+  contribution flows.
 - **Dev-only mock route.** `GHE_MOCK_REPOSITORIES=1` short-circuits
   /api/repositories with a fixed owner + monitor pair (no GitHub token
   required). Useful for UI development, screenshots, and the
@@ -49,6 +60,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Quitting or closing the desktop app now terminates the entire embedded
+  backend process group, including the PyInstaller child process, so port 8765
+  is not left occupied by an orphaned server.
 - `report_generator.py` now renders every recommended issue as a clickable
   `[[#N](url)]` link instead of a bare `#N:`. Falls back to the plain form
   when the model-supplied URL is empty.

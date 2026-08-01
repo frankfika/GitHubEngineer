@@ -206,7 +206,12 @@
       || job?.test_summary
       || ''
     ).trim();
-    return { status, detail };
+    const reason = String(
+      (raw && typeof raw === 'object' && raw.reason)
+      || job?.verification_reason
+      || ''
+    ).trim().toLowerCase();
+    return { status, detail, reason };
   };
 
   const renderVerification = (job) => {
@@ -840,10 +845,7 @@
       // 同步更新顶部 "匿名 / 完整模式" 徽章 — 跟随 viewer 字段
       // (anonymous / authenticated) 走, 不依赖第二个 fetch.
       updateModeIndicator(Boolean(result.viewer), result.viewer || '');
-      // topbar select 只用来**切换**已选 repo, 永远不预选. 第一个 option
-      // 是「— 请选择 —」, 强制用户主动选.
-      repoSwitcher.innerHTML = '<option value="" selected disabled>— 请选择 —</option>'
-        + repositories.map((repository) => {
+      repoSwitcher.innerHTML = repositories.map((repository) => {
             const suffix = repository.access === 'monitor'
               ? ' · 外部 · 可贡献'
               : (repository.private ? ' · 私有' : '');
@@ -873,44 +875,26 @@
         if (issueInbox) issueInbox.innerHTML = '<div class="issue-empty"><strong>未选择仓库</strong><span>添加一个仓库后再开始监控。</span></div>';
         return;
       }
-      // 有 repo 但 init 阶段**不预选任何** (不读 localStorage remembered,
-      // 不 fallback 到 repositories[0], 也不信后端的 result.selected).
-      // 跟「用户没主动选 = 没用」的原则一致, 避免刚启动就被某个 repo
-      // 占据 heading / 触发 fetch. 用户从 sidebar 或 topbar 主动点才算
-      // 选中.
-      currentRepository = '';
+      // 恢复上次选择；本地记录失效时使用后端默认仓库，再 fallback 到
+      // 列表第一项。桌面应用启动后应直接可用，不能让已经配置完成的用户
+      // 每次都停在“未选择仓库”的死首屏。
+      let rememberedRepository = '';
+      try { rememberedRepository = window.localStorage.getItem('ghe:selected-repository') || ''; } catch (_) {}
+      const repositoryNames = new Set(repositories.map((repository) => repository.full_name));
+      const selectedRepository = repositoryNames.has(rememberedRepository)
+        ? rememberedRepository
+        : (repositoryNames.has(result.selected) ? result.selected : repositories[0].full_name);
+      currentRepository = selectedRepository;
       repoSwitcher.disabled = false;
-      repoSwitcher.value = '';
+      repoSwitcher.value = selectedRepository;
       if (root) {
         root.classList.remove('no-repositories');
-        root.dataset.repo = '';
+        root.dataset.repo = selectedRepository;
       }
       if (repositoryOnboarding) repositoryOnboarding.hidden = true;
       document.documentElement.classList.remove('no-repositories');
-      if (activeRepoHeading) {
-        activeRepoHeading.textContent = '未选择仓库';
-        // 同样: 重置回「未选」要加回 heading-idle class, 不然 heading 视觉会留
-        // 在「已选」时的黑色加粗.
-        activeRepoHeading.classList.add('heading-idle');
-        activeRepoHeading.classList.remove('heading-failed');
-      }
-      if (dailySummary) dailySummary.textContent = repositories.length === 1
-        ? `已加载 1 个追踪仓库, 左侧点一下开始。`
-        : `已加载 ${repositories.length} 个追踪仓库, 左侧或上方选一个开始。`;
-      if (repoPermission) {
-        repoPermission.hidden = true;
-        repoPermission.textContent = '';
-      }
-      if (loadIssuesButton) loadIssuesButton.hidden = true;
-      // 重置回「未选择仓库」时, refresh 按钮也得 hidden — 不然处于
-      // 「可见但 currentRepository 为空」状态, 点下去只会弹 toast,
-      // 撞出「看着能点, 点了只弹 toast」的废按钮.
-      if (refreshIssues) refreshIssues.hidden = true;
-      if (issueSummary) issueSummary.innerHTML = '<span><strong>—</strong> 个待处理</span>';
-      if (issueInbox) issueInbox.innerHTML = '<div class="issue-empty"><strong>未选择仓库</strong><span>点 sidebar 的 repo (或上方下拉) 选中后, 会自动拉取 Issue。</span></div>';
-      // 重置时也清掉所有 pill 的 active class, 避免上一次的「selected」
-      // 视觉残留. 用户没选 = 全不 active.
-      qsa('.repo-pill').forEach((pill) => pill.classList.remove('active'));
+      try { window.localStorage.setItem('ghe:selected-repository', selectedRepository); } catch (_) {}
+      await loadIssues(selectedRepository);
     } catch (error) {
       repoSwitcher.innerHTML = '<option value="" selected disabled>无法读取仓库</option>';
       repoSwitcher.disabled = true;
@@ -1319,11 +1303,19 @@
       ? '这次没有生成可提交的修改。完成下面的设置后，再重新运行一次。'
       : '这次修复没有完成。请按下面提示处理后重新运行。';
     const displayMessage = job.status === 'failed' ? failureMessage : (job.message || '');
+    const verification = repairVerification(job);
+    const hostVerificationCta = (
+      job.status === 'review_ready'
+      && verification.status === 'unverified'
+      && verification.reason === 'sandbox_unavailable'
+    )
+      ? '<div class="repair-safety-note"><strong>需要你的明确许可</strong>本机验证会执行这个仓库里的测试代码，可能包含不可信逻辑。<div class="suggestions"><button class="suggestion primary-suggestion" type="button" data-allow-host-verification>我理解风险，在本机运行测试</button></div></div>'
+      : '';
     const events = [
       repairEvent(
         'assistant',
         repairStatusLabels[job.status] || '修复会话',
-        `<strong>${escapeHtml(repairStatusLabels[job.status] || job.status)}</strong><br>${escapeHtml(displayMessage)}${failureHelp}${renderVerification(job)}${isDemoRepair(job) ? '<div class="repair-safety-note"><strong>演示任务不可发布</strong>fake/demo Provider 的变更仅供体验界面，不会解锁 Draft PR。</div>' : ''}`,
+        `<strong>${escapeHtml(repairStatusLabels[job.status] || job.status)}</strong><br>${escapeHtml(displayMessage)}${failureHelp}${renderVerification(job)}${hostVerificationCta}${isDemoRepair(job) ? '<div class="repair-safety-note"><strong>演示任务不可发布</strong>fake/demo Provider 的变更仅供体验界面，不会解锁 Draft PR。</div>' : ''}`,
         '',
         job.status === 'failed' ? 'error' : '',
       ),
@@ -1354,7 +1346,6 @@
     // 发布还需要完成 diff 审核；loadAndRenderDiff 会在全部 hunk 已处理且
     // 至少接受一处修改后才真正启用按钮。
     repairPublish.disabled = true;
-    const verification = repairVerification(job);
     const demo = isDemoRepair(job);
     repairPublish.textContent = demo
       ? '演示任务不可发布'
@@ -1504,6 +1495,11 @@
     const demo = isDemoRepair(currentRepairJob);
     const providerSafe = providerAllowsPublishing(currentRepairJob);
     const verification = repairVerification(currentRepairJob);
+    const canRequestHostVerification = (
+      currentRepairJob?.status === 'review_ready'
+      && verification.status === 'unverified'
+      && verification.reason === 'sandbox_unavailable'
+    );
     const readyToPublish = (
       currentRepairJob?.status === 'review_ready'
       && providerSafe
@@ -1528,7 +1524,7 @@
       }
     }
     if (repairPublish) {
-      repairPublish.disabled = !readyToPublish;
+      repairPublish.disabled = !(readyToPublish || canRequestHostVerification);
       if (demo) {
         repairPublish.textContent = '演示任务不可发布';
         repairPublish.title = 'fake/demo Provider 只用于体验流程，禁止创建 Draft PR';
@@ -1538,6 +1534,9 @@
       } else if (verification.status === 'failed') {
         repairPublish.textContent = '验证失败，不能发布';
         repairPublish.title = '修复测试或验证未通过';
+      } else if (canRequestHostVerification) {
+        repairPublish.textContent = '在本机运行测试…';
+        repairPublish.title = '将先确认风险，再执行仓库里的测试代码';
       } else if (verification.status !== 'passed') {
         repairPublish.textContent = '未验证，不能发布';
         repairPublish.title = '需要明确的测试或验证通过结果';
@@ -2446,6 +2445,24 @@
       renderRepairSession();
       return;
     }
+    if (event.target.closest('[data-allow-host-verification]') && currentRepairJob) {
+      const button = event.target.closest('[data-allow-host-verification]');
+      button.disabled = true;
+      button.textContent = '正在启动验证…';
+      fetchJson(`/api/repairs/${encodeURIComponent(currentRepairJob.id)}/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ allow_host_verification: true }),
+      }).then((result) => {
+        renderRepairSession(result);
+        pollRepairJob(result.id);
+      }).catch((error) => {
+        showToast(error.message || '本机验证启动失败');
+        button.disabled = false;
+        button.textContent = '我理解风险，在本机运行测试';
+      });
+      return;
+    }
     // 失败 UI 的细粒度操作: 复制命令 / 展开日志 / 调整指令后重跑
     const copyCommand = event.target.closest('[data-copy-command]');
     if (copyCommand) {
@@ -2465,8 +2482,8 @@
       if (willShow && !logBox.dataset.loaded && currentRepairJob) {
         const pre = logBox.querySelector('pre');
         if (pre) pre.textContent = '正在加载…';
-        // 简单 GET 路径: 复用 .ghe/repair-jobs/<id>.log 的静态文件服务.
-        // 当前后端没暴露这个 endpoint, 失败时降级为提示用户路径.
+        // 通过受 job id 限制的后端端点读取日志尾部；请求失败时再降级为
+        // 本地路径提示。
         fetch(`/api/repairs/${encodeURIComponent(currentRepairJob.id)}/log`)
           .then((r) => r.ok ? r.text() : Promise.reject(new Error('日志不可用')))
           .then((text) => {
@@ -2835,6 +2852,28 @@
     repairPublish.addEventListener('click', async () => {
       if (!currentRepairJob || currentRepairJob.status !== 'review_ready') return;
       const jobId = String(currentRepairJob.id || '');
+      const currentVerification = repairVerification(currentRepairJob);
+      if (
+        currentVerification.status === 'unverified'
+        && currentVerification.reason === 'sandbox_unavailable'
+      ) {
+        if (!window.confirm('本机验证会执行这个仓库里的测试代码，可能包含不可信逻辑。确认继续吗？')) return;
+        repairPublish.disabled = true;
+        repairPublish.textContent = '正在启动验证…';
+        try {
+          const result = await fetchJson(`/api/repairs/${encodeURIComponent(jobId)}/verify`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ allow_host_verification: true }),
+          });
+          renderRepairSession(result);
+          pollRepairJob(result.id);
+        } catch (error) {
+          showToast(error.message || '本机验证启动失败');
+          updateDiffCtaStatus();
+        }
+        return;
+      }
       if (!providerAllowsPublishing(currentRepairJob)) {
         updateDiffCtaStatus();
         showToast(isDemoRepair(currentRepairJob)

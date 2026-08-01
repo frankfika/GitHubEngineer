@@ -2,10 +2,41 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
+
 use tauri::{Manager, WindowEvent};
 
 #[derive(Default)]
 struct BackendProcess(Mutex<Option<Child>>);
+
+fn stop_backend(child: &mut Child) {
+    #[cfg(unix)]
+    {
+        // PyInstaller --onefile uses a bootloader parent plus the Python
+        // service child. Killing only the direct child leaves the service
+        // listening on 8765 after the desktop window exits. The backend is
+        // launched in its own process group, so terminate the entire tree.
+        unsafe {
+            libc::killpg(child.id() as libc::pid_t, libc::SIGKILL);
+        }
+        let _ = child.wait();
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+}
+
+fn stop_managed_backend<R: tauri::Runtime, M: Manager<R>>(manager: &M) {
+    if let Ok(mut process) = manager.state::<BackendProcess>().0.lock() {
+        if let Some(child) = process.as_mut() {
+            stop_backend(child);
+        }
+        *process = None;
+    }
+}
 
 fn packaged_backend_path() -> Result<PathBuf, String> {
     let executable = std::env::current_exe()
@@ -31,7 +62,7 @@ fn packaged_backend_path() -> Result<PathBuf, String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .manage(BackendProcess::default())
         .setup(|app| {
             if !cfg!(debug_assertions) {
@@ -66,7 +97,8 @@ pub fn run() {
                     )
                     .map_err(|error| format!("could not write desktop starter config: {error}"))?;
                 }
-                let child = Command::new(backend)
+                let mut command = Command::new(backend);
+                command
                     .arg("--serve")
                     .args(["--serve-host", "127.0.0.1"])
                     .arg("--config")
@@ -74,7 +106,10 @@ pub fn run() {
                     .current_dir(data_dir)
                     .stdin(Stdio::null())
                     .stdout(Stdio::null())
-                    .stderr(Stdio::null())
+                    .stderr(Stdio::null());
+                #[cfg(unix)]
+                command.process_group(0);
+                let child = command
                     .spawn()
                     .map_err(|error| format!("could not start packaged backend: {error}"))?;
                 *app.state::<BackendProcess>()
@@ -87,15 +122,17 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if matches!(event, WindowEvent::Destroyed) {
-                if let Ok(mut process) = window.state::<BackendProcess>().0.lock() {
-                    if let Some(child) = process.as_mut() {
-                        let _ = child.kill();
-                        let _ = child.wait();
-                    }
-                    *process = None;
-                }
+                stop_managed_backend(window);
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running GitHub Engineer");
+        .build(tauri::generate_context!())
+        .expect("error while building GitHub Engineer");
+    app.run(|app_handle, event| {
+        if matches!(
+            event,
+            tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
+        ) {
+            stop_managed_backend(app_handle);
+        }
+    });
 }

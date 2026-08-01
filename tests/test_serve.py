@@ -755,6 +755,20 @@ class ServeSubcommandTest(unittest.TestCase):
         )
         self.assertEqual(status, 409)
 
+    def test_host_verification_route_requires_explicit_consent(self):
+        job_id = "verifyconsent"
+        self._seed_review_workspace(job_id)
+
+        status, _, body = _http_post(
+            self.port,
+            f"/api/repairs/{job_id}/verify",
+            b"{}",
+            "application/json",
+        )
+
+        self.assertEqual(status, 400)
+        self.assertIn("明确同意".encode(), body)
+
     def test_coding_agent_configure_writes_secret_without_echoing_it(self):
         original = self.config_path.read_text(encoding="utf-8")
         secret = "sk-test-secret-never-echo"

@@ -1,0 +1,132 @@
+name: desktop-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: "Publish a signed and notarized GitHub Release (requires Apple secrets)."
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    name: macOS ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    env:
+      PUBLISH_RELEASE: ${{ inputs.publish_release }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install build dependencies
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install -e '.[dev]'
+          npm ci
+
+      - name: Test Python and web assets
+        run: .venv/bin/python -m pytest -q
+
+      - name: Require Apple release credentials
+        if: inputs.publish_release
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          required=(APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD KEYCHAIN_PASSWORD)
+          for name in "${required[@]}"; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Missing required release secret: $name" >&2
+              exit 1
+            fi
+          done
+
+      - name: Import Developer ID certificate
+        if: inputs.publish_release
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -t 3600 -u build.keychain
+          security import certificate.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          identity="$(security find-identity -v -p codesigning build.keychain | sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p' | head -1)"
+          if [[ -z "$identity" ]]; then
+            echo "No Developer ID Application identity found in imported certificate." >&2
+            exit 1
+          fi
+          echo "APPLE_SIGNING_IDENTITY=$identity" >> "$GITHUB_ENV"
+          rm -f certificate.p12
+
+      - name: Build installable artifacts
+        if: ${{ !inputs.publish_release }}
+        run: npm run desktop:build
+
+      - name: Verify ad-hoc build
+        if: ${{ !inputs.publish_release }}
+        run: |
+          app="src-tauri/target/release/bundle/macos/GitHub Engineer.app"
+          dmg="$(find src-tauri/target/release/bundle/dmg -name '*.dmg' -print -quit)"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          hdiutil verify "$dmg"
+
+      - name: Upload installable artifacts
+        if: ${{ !inputs.publish_release }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: github-engineer-macos-${{ matrix.arch }}
+          path: |
+            src-tauri/target/release/bundle/dmg/*.dmg
+            src-tauri/target/release/bundle/macos/*.app
+          if-no-files-found: error
+
+      - name: Publish signed and notarized desktop release
+        if: inputs.publish_release
+        uses: tauri-apps/tauri-action@944946e3e4cac6603d1fe8f514171e9ecd3c78aa # v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
+        with:
+          tagName: desktop-v__VERSION__
+          releaseName: "GitHub Engineer Desktop v__VERSION__"
+          releaseBody: "Signed and notarized macOS installers for Apple Silicon and Intel Macs."
+          releaseDraft: false
+          prerelease: false

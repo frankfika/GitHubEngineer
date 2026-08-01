@@ -223,8 +223,13 @@ def _verify_changes(
             # macOS commonly ships only ``python3``. Use the trusted
             # coordinator interpreter for host-opt-in Python verification
             # instead of assuming a ``python`` shim exists on PATH.
+            python_executable = (
+                find_desktop_executable("python3")
+                or find_desktop_executable("python")
+                or sys.executable
+            )
             arguments = (
-                [sys.executable, *command[1:]]
+                [python_executable, *command[1:]]
                 if command[0] == "python"
                 else command
             )
@@ -341,6 +346,21 @@ def _load_worker_config(config_path: "str | Path | None") -> "dict[str, object] 
     except (OSError, yaml.YAMLError):
         return None
     return loaded if isinstance(loaded, dict) else None
+
+
+def _verification_config(
+    config: "dict[str, object] | None",
+    job: dict[str, object],
+) -> dict[str, object] | None:
+    """Apply a per-task, explicit host-verification consent."""
+
+    if job.get("allow_host_verification") is not True:
+        return config
+    merged = dict(config or {})
+    repair = dict(merged.get("repair") or {}) if isinstance(merged.get("repair"), dict) else {}
+    repair["allow_host_verification"] = True
+    merged["repair"] = repair
+    return merged
 
 
 def _pull_request_url(output: str) -> str:
@@ -856,6 +876,7 @@ def run_repair_job(
         issue_number = int(job["issue_number"])
         workspace = Path(str(job["workspace"])).resolve()
         branch = str(job.get("branch") or f"ghe/issue-{issue_number}-{str(job['id'])[:6]}")
+        worker_config = _verification_config(_load_worker_config(config_path), job)
         if mode == "publish":
             if job.get("is_demo") is True or str(
                 job.get("coding_agent_provider") or ""
@@ -880,6 +901,25 @@ def run_repair_job(
             if str(job.get("status")) not in {"review_ready", "publish_queued"}:
                 raise RuntimeError("Repair must be reviewed before publishing.")
             _publish_repair(path, job, workspace)
+            return
+
+        if mode == "verify":
+            if job.get("allow_host_verification") is not True:
+                raise RuntimeError("Host verification requires explicit per-task consent.")
+            _write_job(path, job, status="verifying", message="正在本机运行你明确允许的验证命令…")
+            verification = _verify_changes(workspace, worker_config)
+            status = str(verification.get("status") or "unverified")
+            _write_job(
+                path,
+                job,
+                status="review_ready",
+                verification=verification,
+                message=(
+                    "本机验证通过，可以继续审核修改。"
+                    if status == "passed"
+                    else f"本机验证结果：{status}。{verification.get('message', '')}"
+                ),
+            )
             return
 
         if mode == "start":
@@ -907,7 +947,7 @@ def run_repair_job(
             raise RuntimeError(f"Unsupported repair mode: {mode}")
 
         agent_prompt = render_repair_prompt(issue_number, repository, task)
-        _agent_pass(path, job, workspace, agent_prompt)
+        _agent_pass(path, job, workspace, agent_prompt, config=worker_config)
     except Exception as exc:  # worker boundary: persist failures for the UI
         print(
             f"repair job {job.get('id', '')} failed: {str(exc)[:2_000]}",
@@ -921,7 +961,7 @@ def main() -> int:
     args = sys.argv[1:]
     if not args or args[0] in {"-h", "--help"}:
         print(
-            "usage: python -m src.repair_worker JOB.json [start|revise|publish] [--config PATH]",
+            "usage: python -m src.repair_worker JOB.json [start|revise|verify|publish] [--config PATH]",
             file=sys.stderr,
         )
         return 2
@@ -942,13 +982,13 @@ def main() -> int:
         i += 1
     if not positional or len(positional) > 2:
         print(
-            "usage: python -m src.repair_worker JOB.json [start|revise|publish] [--config PATH]",
+            "usage: python -m src.repair_worker JOB.json [start|revise|verify|publish] [--config PATH]",
             file=sys.stderr,
         )
         return 2
     job_path = positional[0]
     mode = positional[1] if len(positional) == 2 else "start"
-    if mode not in {"start", "revise", "publish"}:
+    if mode not in {"start", "revise", "verify", "publish"}:
         print(f"error: unknown mode {mode!r}", file=sys.stderr)
         return 2
     run_repair_job(job_path, mode=mode, config_path=config_path)

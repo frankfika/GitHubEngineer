@@ -284,6 +284,63 @@ def test_demo_job_is_rejected_by_worker_publish_boundary(tmp_path):
     assert "cannot be published" in failed["message"]
 
 
+def test_explicit_per_task_consent_reruns_host_verification(tmp_path):
+    job_path = tmp_path / "job.json"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    job_path.write_text(
+        json.dumps(
+            {
+                "id": "verify123",
+                "status": "review_ready",
+                "repository": "acme/widgets",
+                "issue_number": 3,
+                "workspace": str(workspace),
+                "allow_host_verification": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    passed = {
+        "status": "passed",
+        "message": "1 passed",
+        "commands": [{"display": "python -m pytest -q", "exit_code": 0}],
+    }
+
+    with patch("src.repair_worker._verify_changes", return_value=passed) as verify:
+        run_repair_job(job_path, mode="verify")
+
+    result = json.loads(job_path.read_text(encoding="utf-8"))
+    assert result["status"] == "review_ready"
+    assert result["verification"] == passed
+    config = verify.call_args.args[1]
+    assert config["repair"]["allow_host_verification"] is True
+
+
+def test_host_reverification_fails_closed_without_per_task_consent(tmp_path):
+    job_path = tmp_path / "job.json"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    job_path.write_text(
+        json.dumps(
+            {
+                "id": "verify124",
+                "status": "review_ready",
+                "repository": "acme/widgets",
+                "issue_number": 3,
+                "workspace": str(workspace),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    run_repair_job(job_path, mode="verify")
+
+    result = json.loads(job_path.read_text(encoding="utf-8"))
+    assert result["status"] == "failed"
+    assert "explicit per-task consent" in result["message"]
+
+
 def test_render_repair_prompt_uses_shared_template():
     """Round 7 P1: the web UI, Tauri shell, and CLI all read the same
     prompts/repair.md so a one-line tweak reaches every entry point.

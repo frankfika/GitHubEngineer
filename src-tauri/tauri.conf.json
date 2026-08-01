@@ -42,7 +42,8 @@
     ],
     "macOS": {
       "signingIdentity": "-",
-      "hardenedRuntime": false
+      "hardenedRuntime": true,
+      "entitlements": "Entitlements.plist"
     },
     "category": "DeveloperTool",
     "shortDescription": "AI maintainer assistant for GitHub repositories"
