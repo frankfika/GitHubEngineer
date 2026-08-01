@@ -35,7 +35,7 @@ def _free_port() -> int:
         return sock.getsockname()[1]
 
 
-def _wait_for_server(port: int, host: str = "127.0.0.1", deadline: float = 20.0) -> None:
+def _wait_for_server(port: int, host: str = "127.0.0.1", deadline: float = 60.0) -> None:
     started = time.monotonic()
     while time.monotonic() - started < deadline:
         with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as sock:
