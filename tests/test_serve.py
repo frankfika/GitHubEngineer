@@ -121,6 +121,7 @@ class ServeSubcommandTest(unittest.TestCase):
             encoding="utf-8",
         )
         cls.port = _free_port()
+        cls._server_log = (cls.directory / "server.log").open("w+b")
         cls._process: subprocess.Popen | None = subprocess.Popen(
             [
                 sys.executable,
@@ -134,18 +135,23 @@ class ServeSubcommandTest(unittest.TestCase):
             ],
             cwd=str(cls.directory),
             env=_server_env(cls.port),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stdout=cls._server_log,
+            stderr=subprocess.STDOUT,
         )
         try:
             _wait_for_server(cls.port)
         except Exception:
             cls._process.kill()
-            stdout, stderr = cls._process.communicate(timeout=5)
+            cls._process.wait(timeout=5)
             cls._process = None
+            cls._server_log.flush()
+            cls._server_log.seek(0)
+            output = cls._server_log.read()
+            cls._server_log.close()
+            cls._temp_dir.cleanup()
             raise RuntimeError(
                 "test server failed to start:\n"
-                + (stderr or stdout).decode("utf-8", errors="replace")[-2000:]
+                + output.decode("utf-8", errors="replace")[-2000:]
             )
 
     @classmethod
@@ -157,6 +163,7 @@ class ServeSubcommandTest(unittest.TestCase):
             except subprocess.TimeoutExpired:
                 cls._process.kill()
                 cls._process.wait()
+        cls._server_log.close()
         cls._temp_dir.cleanup()
 
     def test_healthz_returns_ok(self):
