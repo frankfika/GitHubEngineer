@@ -102,6 +102,7 @@ class ServeSubcommandTest(unittest.TestCase):
             ),
             encoding="utf-8",
         )
+        cls.port = _free_port()
         cls._process: subprocess.Popen | None = None
 
     @classmethod
@@ -118,9 +119,6 @@ class ServeSubcommandTest(unittest.TestCase):
     def setUp(self):
         # Each test starts a fresh server so the in-process decision
         # memory changes from POST /decisions do not leak across tests.
-        # Use a fresh port as well: fast macOS runners can briefly retain the
-        # previous listener while the next Python process imports dependencies.
-        self.port = _free_port()
         env = os.environ.copy()
         env["GHE_SERVE_PORT"] = str(self.port)
         env["PYTHONPATH"] = str(Path(__file__).resolve().parent.parent)
