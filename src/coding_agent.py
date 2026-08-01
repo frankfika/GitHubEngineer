@@ -11,7 +11,7 @@ that single point of truth with a small provider protocol:
         run(prompt, workspace, *, on_event) -> CodingAgentResult
         health_check() -> bool                (optional)
 
-Three concrete providers ship out of the box:
+Four concrete providers ship out of the box:
 
 * ``OpenAICompatibleProvider``  -- any ``POST {base_url}/chat/completions``
   endpoint that takes a Bearer key. This is the **default** because it
@@ -21,6 +21,8 @@ Three concrete providers ship out of the box:
 * ``ClaudeCLIProvider``         -- the legacy ``claude --bare`` shell-out,
   preserved as a fallback for users who already have Claude Code CLI
   configured.
+* ``CodexCLIProvider``          -- the local Codex CLI, including the binary
+  bundled with the Codex desktop app when an npm wrapper is incomplete.
 
 The API strategy shared by ``OpenAICompatibleProvider`` and
 ``AnthropicProvider`` is repository-aware: construct a bounded and
@@ -877,6 +879,28 @@ class ClaudeCLIProvider(CodingAgentProvider):
     def name(self) -> str:
         return "claude_cli"
 
+    def health_check(self) -> bool:
+        """Require a real Claude login instead of treating presence as ready."""
+
+        try:
+            result = subprocess.run(
+                [self.executable, "auth", "status"],  # type: ignore[list-item]
+                env=None,
+                text=True,
+                capture_output=True,
+                timeout=min(self.timeout, 10.0),
+                shell=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        if result.returncode != 0:
+            return False
+        try:
+            payload = json.loads(result.stdout or "{}")
+        except json.JSONDecodeError:
+            return "logged in" in (result.stdout or "").lower()
+        return bool(payload.get("loggedIn"))
+
     def run(
         self,
         prompt: str,
@@ -891,7 +915,6 @@ class ClaudeCLIProvider(CodingAgentProvider):
             result = subprocess.run(
                 [
                     self.executable,  # type: ignore[list-item]
-                    "--bare",
                     "--print",
                     prompt,
                     "--permission-mode",
@@ -932,6 +955,117 @@ class ClaudeCLIProvider(CodingAgentProvider):
         if on_event is not None:
             on_event({"phase": "cli_finished"})
         return CodingAgentResult(summary=result.stdout[-2_000:])
+
+
+class CodexCLIProvider(CodingAgentProvider):
+    """Run the local Codex CLI inside the isolated repair workspace."""
+
+    def __init__(self, *, executable: str | None = None, timeout: float = 1_800.0):
+        from .process_runtime import find_desktop_executable
+
+        candidates = [executable] if executable else [
+            find_desktop_executable("codex"),
+            str(Path.home() / ".codex" / "plugins" / ".plugin-appserver" / "codex"),
+        ]
+        self.executable = next(
+            (candidate for candidate in candidates if candidate and self._works(candidate)),
+            None,
+        )
+        if not self.executable:
+            raise CodingAgentConfigError(
+                "codex CLI is not usable. Install/update Codex or choose another provider."
+            )
+        self.timeout = float(timeout)
+
+    @staticmethod
+    def _works(executable: str) -> bool:
+        try:
+            result = subprocess.run(
+                [executable, "--version"],
+                text=True,
+                capture_output=True,
+                timeout=10,
+                shell=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return result.returncode == 0
+
+    def name(self) -> str:
+        return "codex_cli"
+
+    def health_check(self) -> bool:
+        try:
+            result = subprocess.run(
+                [self.executable, "login", "status"],
+                text=True,
+                capture_output=True,
+                timeout=10,
+                shell=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return result.returncode == 0 and "logged in" in (
+            (result.stdout or "") + (result.stderr or "")
+        ).lower()
+
+    def run(
+        self,
+        prompt: str,
+        workspace: Path,
+        *,
+        on_event: "Callable[[dict[str, Any]], None] | None" = None,
+    ) -> CodingAgentResult:
+        from .process_runtime import safe_subprocess_env
+
+        if on_event is not None:
+            on_event({"phase": "cli_started", "provider": self.name()})
+        try:
+            result = subprocess.run(
+                [
+                    self.executable,
+                    "exec",
+                    "--sandbox",
+                    "workspace-write",
+                    "--ephemeral",
+                    "--skip-git-repo-check",
+                    "--color",
+                    "never",
+                    "-",
+                ],
+                cwd=str(workspace),
+                env=safe_subprocess_env("worker"),
+                input=prompt,
+                text=True,
+                capture_output=True,
+                timeout=self.timeout,
+                shell=False,
+            )
+        except subprocess.TimeoutExpired:
+            return CodingAgentResult(
+                summary="",
+                error_kind="timeout",
+                error_action="Codex CLI 超过时间限制，重试或缩小任务",
+                error_hint=f"codex timed out after {self.timeout}s",
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            return CodingAgentResult(
+                summary="",
+                error_kind="unknown",
+                error_action="Codex CLI 启动失败",
+                error_hint=str(exc)[:500],
+            )
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()
+            return CodingAgentResult(
+                summary=(result.stdout or "")[-2_000:],
+                error_kind="unknown",
+                error_action="查看 Codex CLI 输出并确认登录状态",
+                error_hint=detail[:1_500] or "codex returned a non-zero exit code",
+            )
+        if on_event is not None:
+            on_event({"phase": "cli_finished", "provider": self.name()})
+        return CodingAgentResult(summary=(result.stdout or "")[-2_000:])
 
 
 def _classify_claude_cli_error(stderr: str) -> str:
@@ -1009,6 +1143,9 @@ def get_provider(config: "dict[str, Any] | None") -> CodingAgentProvider:
         coding_agent:
           provider: claude_cli
 
+        coding_agent:
+          provider: codex_cli
+
     Raises :class:`CodingAgentConfigError` when the section is missing,
     the provider name is unknown, or a required field is empty.
     """
@@ -1051,11 +1188,13 @@ def get_provider(config: "dict[str, Any] | None") -> CodingAgentProvider:
         )
     if provider_name in {"claude_cli", "claude-cli", "claude-code", "claude"}:
         return ClaudeCLIProvider()
+    if provider_name in {"codex_cli", "codex-cli", "codex"}:
+        return CodexCLIProvider()
     if provider_name == "fake":
         return FakeProvider(section)
     raise CodingAgentConfigError(
         f"Unknown coding_agent.provider: {provider_name!r}. "
-        "Use 'openai_compatible', 'anthropic', or 'claude_cli'."
+        "Use 'openai_compatible', 'anthropic', 'codex_cli', or 'claude_cli'."
     )
 
 
@@ -1258,6 +1397,7 @@ class FakeProvider(CodingAgentProvider):
 __all__ = [
     "AnthropicProvider",
     "ClaudeCLIProvider",
+    "CodexCLIProvider",
     "CodingAgentConfigError",
     "CodingAgentProvider",
     "CodingAgentResult",

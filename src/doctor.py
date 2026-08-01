@@ -10,7 +10,7 @@ from typing import Any
 from .config import ConfigError, load_config_lenient
 from .git_detection import detect_git_context
 from .github_client import GitHubClient, GitHubClientError
-from .llm_client import LLMClient, LLMClientError
+from .llm_client import LLMClientError, create_llm_client
 
 
 def run_doctor(config_path: str | None = None) -> int:
@@ -110,26 +110,31 @@ def run_doctor(config_path: str | None = None) -> int:
                 print("   If this is private, connect once with `gh auth login --web`.")
             failed_checks += 1
 
-    # Check 6: LLM API key
-    print("🤖 LLM API key...", end=" ")
-    llm_key = os.getenv("LLM_API_KEY") or config.get("model", {}).get("api_key")
-    if llm_key and llm_key != "${LLM_API_KEY}":
-        print("�� found")
-
-        # Check 6a: LLM connection
-        print("🔌 LLM API connection...", end=" ")
+    # Check 6: brief-generation model. Codex uses the local ChatGPT login;
+    # HTTP providers retain the API-key path.
+    model_config = dict(config.get("model", {}))
+    provider = str(model_config.get("provider") or "openai-compatible").lower().replace("-", "_")
+    is_codex = provider in {"codex", "codex_cli"}
+    llm_key = os.getenv("LLM_API_KEY") or model_config.get("api_key")
+    if is_codex:
+        print("🤖 LLM authentication... ✓ local Codex login")
+    else:
+        print("🤖 LLM API key...", end=" ")
+    if is_codex or (llm_key and llm_key != "${LLM_API_KEY}"):
+        if not is_codex:
+            print("✓ found")
+        print("🔌 LLM connection...", end=" ")
         try:
-            model_config = config.get("model", {})
             base_url = os.getenv("LLM_BASE_URL") or model_config.get("base_url") or ""
-            model_name = os.getenv("LLM_MODEL") or model_config.get("model_name", "gpt-4o-mini")
-
-            llm_client = LLMClient(
-                base_url=base_url if base_url else None,
-                api_key=llm_key,
-                model=model_name,
+            model_name = os.getenv("LLM_MODEL") or model_config.get("model_name") or (
+                "codex-default" if is_codex else "gpt-4o-mini"
             )
-            # Try a minimal request
-            response = llm_client.chat([{"role": "user", "content": "test"}], max_tokens=5)
+            effective_config = dict(model_config)
+            effective_config.update({"base_url": base_url, "model_name": model_name})
+            if llm_key:
+                effective_config["api_key"] = llm_key
+            llm_client = create_llm_client(effective_config)
+            llm_client.generate("Reply with OK.")
             print(f"✓ OK (model: {model_name})")
         except Exception as e:
             print("✗ failed")

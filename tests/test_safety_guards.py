@@ -189,7 +189,7 @@ class GheHistoryDirGuardTest(unittest.TestCase):
                 sys.argv = ["ghe", "--config", str(config_path)]
                 with patch.dict(os.environ, {"GHE_HISTORY_DIR": "/etc/ghe-history"}, clear=False):
                     with patch("src.main.GitHubClient", return_value=github), patch(
-                        "src.main.LLMClient", return_value=llm
+                        "src.main.create_llm_client", return_value=llm
                     ), patch("sys.stderr") as stderr:
                         self.assertEqual(main(), 0)
                 warnings = "".join(call.args[0] for call in stderr.write.call_args_list)
@@ -268,12 +268,14 @@ class SafeSubprocessEnvTest(unittest.TestCase):
                 "LLM_API_KEY": "sk-leak",
                 "ANTHROPIC_API_KEY": "sk-ant-leak",
                 "HOME": "/home/x",
+                "HTTPS_PROXY": "http://127.0.0.1:7890",
             },
             clear=False,
         ):
             env = safe_subprocess_env("delegate")
             self.assertEqual(env.get("PATH"), "/usr/bin")
             self.assertEqual(env.get("HOME"), "/home/x")
+            self.assertEqual(env.get("HTTPS_PROXY"), "http://127.0.0.1:7890")
             self.assertNotIn("GITHUB_TOKEN", env)
             self.assertNotIn("LLM_API_KEY", env)
             self.assertNotIn("ANTHROPIC_API_KEY", env)

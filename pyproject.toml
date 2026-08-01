@@ -8,7 +8,7 @@ version = "1.0.0"
 description = "Generate a Maintainer Brief for a GitHub repository: ranked issues, decision memory, and bounded coding-agent task handoff."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = "MIT"
 authors = [
     { name = "GitHub Engineer contributors" },
 ]
@@ -27,7 +27,6 @@ keywords = [
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
@@ -62,11 +61,11 @@ ghe-web = "src.main:main"
 ghe = "src.main:main"
 
 [project.urls]
-"Source" = "https://github.com/your-org/github-engineer"
-"Issues" = "https://github.com/your-org/github-engineer/issues"
-"Changelog" = "https://github.com/your-org/github-engineer/blob/main/CHANGELOG.md"
-"Security" = "https://github.com/your-org/github-engineer/blob/main/SECURITY.md"
-"Architecture" = "https://github.com/your-org/github-engineer/blob/main/ARCHITECTURE.md"
+"Source" = "https://github.com/frankfika/GitHubEngineer"
+"Issues" = "https://github.com/frankfika/GitHubEngineer/issues"
+"Changelog" = "https://github.com/frankfika/GitHubEngineer/blob/main/CHANGELOG.md"
+"Security" = "https://github.com/frankfika/GitHubEngineer/blob/main/SECURITY.md"
+"Architecture" = "https://github.com/frankfika/GitHubEngineer/blob/main/ARCHITECTURE.md"
 
 [tool.setuptools.packages.find]
 where = ["."]

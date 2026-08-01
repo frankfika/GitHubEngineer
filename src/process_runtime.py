@@ -120,6 +120,22 @@ def safe_subprocess_env(purpose: str) -> dict[str, str]:
         "XDG_CONFIG_HOME",
         "XDG_CACHE_HOME",
         "XDG_DATA_HOME",
+        # Preserve standard network routing. Desktop-launched processes often
+        # require these to reach the model service; dropping them makes the
+        # CLI appear authenticated but hang until timeout.
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "NO_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+        "no_proxy",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+        "REQUESTS_CA_BUNDLE",
+        "CURL_CA_BUNDLE",
+        "NO_COLOR",
     }
     _KNOWN_GH_TOKENS = {"GITHUB_TOKEN", "GH_TOKEN"}
     _KNOWN_MODEL_KEYS = {"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "LLM_API_KEY"}

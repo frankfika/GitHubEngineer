@@ -81,7 +81,7 @@ class TestRunDoctor:
     @patch("src.doctor.load_config_lenient")
     @patch("src.doctor.Path.exists")
     @patch("src.doctor.GitHubClient")
-    @patch("src.doctor.LLMClient")
+    @patch("src.doctor.create_llm_client")
     @patch("src.doctor.detect_git_context")
     @patch.dict(os.environ, {"GITHUB_TOKEN": "ghp_test", "LLM_API_KEY": "sk_test"}, clear=True)
     def test_all_checks_pass(self, mock_git_ctx, mock_llm, mock_github, mock_exists, mock_load):
@@ -102,18 +102,63 @@ class TestRunDoctor:
             remotes=[],
         )
         mock_github.return_value = MagicMock()
-        mock_llm.return_value.chat.return_value = {"model": "gpt-4o-mini"}
+        mock_llm.return_value.generate.return_value = "OK"
 
         result = run_doctor()
 
         assert result == 0
+        mock_llm.assert_called_once_with(
+            {
+                "api_key": "sk_test",
+                "model_name": "gpt-4o-mini",
+                "base_url": "",
+            }
+        )
+        mock_llm.return_value.generate.assert_called_once_with("Reply with OK.")
 
     @patch("sys.version_info", (3, 11, 5))
     @patch("src.doctor.load_config_lenient")
     @patch("src.doctor.Path.exists")
+    @patch("src.doctor.GitHubClient")
+    @patch("src.doctor.create_llm_client")
+    @patch("src.doctor.detect_git_context")
+    @patch.dict(os.environ, {}, clear=True)
+    def test_codex_checks_pass_without_llm_api_key(
+        self, mock_git_ctx, mock_llm, mock_github, mock_exists, mock_load
+    ):
+        from src.git_detection import GitContext
+
+        mock_exists.return_value = True
+        mock_load.return_value = {
+            "repo": {"owner": "test", "name": "repo"},
+            "model": {"provider": "codex_cli"},
+            "github": {},
+        }
+        mock_git_ctx.return_value = GitContext(
+            is_git_repo=False,
+            current_repo=None,
+            is_fork=False,
+            upstream_repo=None,
+            remotes=[],
+        )
+        mock_github.return_value = MagicMock()
+        mock_llm.return_value.generate.return_value = "OK"
+
+        assert run_doctor() == 0
+        mock_llm.assert_called_once_with(
+            {"provider": "codex_cli", "base_url": "", "model_name": "codex-default"}
+        )
+
+    @patch("sys.version_info", (3, 11, 5))
+    @patch("src.doctor.load_config_lenient")
+    @patch("src.doctor.Path.exists")
+    @patch("src.doctor.GitHubClient")
+    @patch("src.doctor.create_llm_client")
     @patch("src.doctor.detect_git_context")
     @patch.dict(os.environ, {"GITHUB_TOKEN": "ghp_test", "LLM_API_KEY": "sk_test"}, clear=True)
-    def test_fork_detection_info(self, mock_git_ctx, mock_exists, mock_load):
+    def test_fork_detection_info(
+        self, mock_git_ctx, mock_llm, mock_github, mock_exists, mock_load
+    ):
         """Should display fork information when detected."""
         from src.git_detection import GitContext
 
@@ -130,6 +175,8 @@ class TestRunDoctor:
             upstream_repo="OpenCSG/csghub",
             remotes=[],
         )
+        mock_github.return_value = MagicMock()
+        mock_llm.return_value.generate.return_value = "OK"
 
         # Should not fail, just display info
         # We can't easily capture print output in this test without more mocking

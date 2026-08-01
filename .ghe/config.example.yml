@@ -15,11 +15,13 @@ github:
   token: ${GITHUB_TOKEN}
 
 model:
-  provider: "openai-compatible"
-  # Leave LLM_BASE_URL unset for OpenAI's default endpoint.
-  base_url: ${LLM_BASE_URL}
-  api_key: ${LLM_API_KEY}
-  model_name: ${LLM_MODEL}
+  # Recommended in the desktop app: reuses the local ``codex login`` /
+  # ChatGPT session and needs no API key. For a headless server, switch to
+  # ``openai-compatible`` and set base_url, api_key, and model_name.
+  provider: codex_cli
+  model_name: codex-default
+  # base_url: ${LLM_BASE_URL}
+  # api_key: ${LLM_API_KEY}
 
 output:
   format: "markdown"  # markdown | action-summary
@@ -36,25 +38,25 @@ analysis:
   max_prompt_chars: 90000
 
 # Coding agent — which LLM provider the repair worker calls when it
-# auto-fixes an issue.  The default ``openai_compatible`` works for
+# auto-fixes an issue. The desktop-friendly default reuses the local Codex
+# login. ``openai_compatible`` also works for
 # OpenAI, DeepSeek, OpenRouter, Ollama, vLLM, LM Studio, and any other
 # server that follows the OpenAI Chat Completions schema.  Switch
 # ``provider`` to ``anthropic`` to use the first-party Anthropic
-# Messages API, or to ``claude_cli`` as a fallback that shells out to
-# the local Claude Code CLI binary (if installed).  Run
+# Messages API, or to ``claude_cli`` for the local Claude Code CLI. Run
 # ``ghe --configure-coding-agent`` for an interactive walk-through.
 coding_agent:
-  provider: openai_compatible
+  provider: codex_cli
   # OpenAI's default endpoint.  Override for self-hosted Ollama /
   # vLLM / DeepSeek / OpenRouter, etc.
-  base_url: https://api.openai.com/v1
+  # base_url: https://api.openai.com/v1
   # ``api_key`` is read directly; an empty value falls back to
   # $LLM_API_KEY so the secret can live in the environment.
-  api_key: ${LLM_API_KEY}
+  # api_key: ${LLM_API_KEY}
   # Any model the configured provider serves.  OpenAI: gpt-4o /
   # o1-mini / o3-mini.  Anthropic: claude-sonnet-4-5 / claude-opus-4-1.
   # Ollama: qwen2.5-coder:32b / deepseek-coder-v2:16b.
-  model: gpt-4o
+  # model: gpt-4o
 
   # Or Anthropic API (first-party Messages API):
   # provider: anthropic

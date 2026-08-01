@@ -847,7 +847,8 @@ class ServeSubcommandTest(unittest.TestCase):
             self.assertEqual(response.status, 200)
             self.assertIn("text/html", response.headers.get("Content-Type", ""))
             body = response.read().decode("utf-8")
-        self.assertIn("<h1>GitHub Engineer</h1>", body)
+        self.assertIn('<span class="brand-title">GitHub Engineer</span>', body)
+        self.assertIn("<h1 id='active-repo-heading'", body)
         self.assertIn("acme_widgets_20260721.md", body)
 
     def test_ui_brief_renders_markdown_as_html(self):

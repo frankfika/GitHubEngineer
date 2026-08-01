@@ -120,9 +120,11 @@ def _validate_config(config: dict[str, Any]) -> None:
     model = config.get("model", {})
     if not isinstance(model, dict):
         raise ConfigError("model must be a mapping.")
-    if not model.get("api_key"):
+    provider = str(model.get("provider") or "openai-compatible").lower().replace("-", "_")
+    is_codex = provider in {"codex", "codex_cli"}
+    if not is_codex and not model.get("api_key"):
         raise ConfigError("Missing model.api_key. Set LLM_API_KEY or config value.")
-    if not model.get("model_name"):
+    if not is_codex and not model.get("model_name"):
         raise ConfigError("Missing model.model_name. Set LLM_MODEL or config value.")
 
     for section in ("repo", "github", "output"):

@@ -54,6 +54,7 @@ APP_CSS = r"""
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { height: 100%; }
 body {
   margin: 0;
@@ -95,7 +96,7 @@ a:hover { text-decoration: none; }
 }
 .brand-mark { width: 28px; height: 28px; border-radius: 9px; }
 .brand-mark svg { width: 15px; height: 15px; }
-.brand h1 { display: block; margin: 0; color: var(--text); font-size: 13px; letter-spacing: -.01em; }
+.brand-title { display: block; margin: 0; color: var(--text); font-size: 13px; font-weight: 700; letter-spacing: -.01em; }
 .workspace-label { display: block; margin: 17px 8px 6px; color: var(--text-3); font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 .repo-list { display: grid; gap: 3px; max-height: 112px; overflow: auto; }
 .repo-pill {
@@ -1066,7 +1067,7 @@ APP_JS = r"""
     if (isDemoRepair(job)) {
       return 'fake 只生成演示数据，不会真正理解或修复仓库；演示任务禁止创建 Draft PR。';
     }
-    if (provider === 'claude_cli' || provider.includes('local') || provider.includes('ollama')) {
+    if (provider === 'codex_cli' || provider === 'claude_cli' || provider.includes('local') || provider.includes('ollama')) {
       return '当前 Provider 在本机处理仓库内容；是否产生外部请求取决于该本地工具自身的配置。';
     }
     return '使用 API Provider 时，Issue 内容与为定位问题选取的仓库源码片段会发送给所配置的模型服务。请确认仓库数据允许发送。';
@@ -2987,6 +2988,7 @@ APP_JS = r"""
   const CODING_AGENT_MODEL_PRESETS = {
     openai_compatible: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'deepseek-chat', 'qwen-coder', 'custom'],
     anthropic: ['claude-sonnet-4-5', 'claude-haiku-4-5', 'claude-opus-4-1', 'custom'],
+    codex_cli: ['codex-default'],
     claude_cli: ['claude-code-default', 'custom'],
     custom: ['custom'],
   };
@@ -3013,19 +3015,24 @@ APP_JS = r"""
     const baseUrlRow = codingAgentDialog.querySelector('[data-coding-agent-row="base-url"]');
     if (baseUrlRow) baseUrlRow.hidden = !(provider === 'openai_compatible' || provider === 'custom');
     const apiKeyRow = codingAgentDialog.querySelector('[data-coding-agent-row="api-key"]');
-    if (apiKeyRow) apiKeyRow.hidden = (provider === 'claude_cli');
+    if (apiKeyRow) apiKeyRow.hidden = (provider === 'codex_cli' || provider === 'claude_cli');
     if (codingAgentModels) {
       const presets = CODING_AGENT_MODEL_PRESETS[provider] || ['custom'];
       codingAgentModels.innerHTML = presets
         .map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`)
         .join('');
+      if (codingAgentModel && !codingAgentModel.value.trim() && presets[0] !== 'custom') {
+        codingAgentModel.value = presets[0];
+      }
     }
     if (codingAgentDataBoundary) {
       codingAgentDataBoundary.textContent = provider === 'fake'
         ? 'fake 是演示 Provider：不会真正理解或修复仓库，产生的演示变更禁止创建 Draft PR。'
-        : (provider === 'claude_cli'
+        : (provider === 'codex_cli'
+          ? 'Codex CLI 在本机隔离工作区读取和修改代码；它是否向外发送内容取决于 Codex CLI 自身配置。'
+          : (provider === 'claude_cli'
           ? 'Claude CLI 在本机工作区读取和修改代码；它是否向外发送内容取决于 Claude CLI 自身配置。'
-          : 'API Provider 会接收 Issue 内容与为定位问题选取的仓库源码片段。请确认仓库数据允许发送给该模型服务。');
+          : 'API Provider 会接收 Issue 内容与为定位问题选取的仓库源码片段。请确认仓库数据允许发送给该模型服务。'));
     }
   };
 
@@ -3079,8 +3086,8 @@ APP_JS = r"""
       if (!codingAgentProvider?.value) return '请选择一个 provider';
     } else if (step === 1) {
       const provider = String(codingAgentProvider?.value || '');
-      if (provider !== 'claude_cli' && !codingAgentApiKey?.value?.trim()) {
-        return '请填 API key (或换 claude_cli provider)';
+      if (!['codex_cli', 'claude_cli'].includes(provider) && !codingAgentApiKey?.value?.trim()) {
+        return '请填 API key（Codex CLI / Claude CLI 不需要 key）';
       }
     } else if (step === 2) {
       if (!codingAgentModel?.value?.trim()) return '请选或填一个 model';
@@ -3257,7 +3264,9 @@ APP_JS = r"""
       return;
     }
     if (event.target.closest('[data-copy-claude-login]')) {
-      const command = 'claude auth login';
+      const command = currentCodingAgent?.provider === 'claude_cli'
+        ? 'claude auth login'
+        : 'codex login';
       navigator.clipboard?.writeText(command)
         .then(() => showToast('已复制。请在终端粘贴运行，然后回到这里重新检查'))
         .catch(() => showToast(command));
@@ -3849,7 +3858,7 @@ def render_shell(
   <aside class="sidebar">
     <a class="brand" href="/ui/" aria-label="GitHub Engineer 首页">
       <span class="brand-mark">{_ICON['assistant']}</span>
-      <h1>GitHub Engineer</h1>
+      <span class="brand-title">GitHub Engineer</span>
     </a>
     <div class="workspace-label">工作区</div>
     <div class="repo-list">{repo_items}</div>
@@ -3961,7 +3970,7 @@ def render_shell(
       <summary>遇到问题？查看备用方式</summary>
       <div class="connection-help-body">
         <p>在终端运行下面的命令，完成后点击“重新检查”。</p>
-        <code>claude auth login</code>
+        <code>codex login（Codex）或 claude auth login（Claude）</code>
         <div class="github-setup-actions">
           <button class="soft-button" type="button" data-copy-claude-login>复制备用命令</button>
           <button class="soft-button" type="button" data-recheck-repair>重新检查</button>
@@ -3995,6 +4004,7 @@ def render_shell(
           <option value="fake" disabled>fake（演示模式，不可发布）</option>
           <option value="openai_compatible">OpenAI-compatible（OpenAI / DeepSeek / Ollama / 自托管）</option>
           <option value="anthropic">Anthropic（claude-sonnet / claude-haiku / claude-opus）</option>
+          <option value="codex_cli">Codex CLI（用本地 ChatGPT 登录态）</option>
           <option value="claude_cli">Claude Code CLI（用本地登录态）</option>
           <option value="custom">自定义 URL</option>
         </select>
@@ -4003,12 +4013,12 @@ def render_shell(
       <div class="field" data-coding-agent-row="base-url">
         <label for="coding-agent-base-url">Base URL</label>
         <input id="coding-agent-base-url" name="base_url" type="url" placeholder="https://api.openai.com/v1">
-        <small class="field-hint">OpenAI-compatible / 自定义 provider 必填，Anthropic / Claude CLI 不需要。</small>
+        <small class="field-hint">OpenAI-compatible / 自定义 provider 必填，Anthropic / Codex CLI / Claude CLI 不需要。</small>
       </div>
       <div class="field" data-coding-agent-row="api-key">
         <label for="coding-agent-api-key">API key</label>
         <input id="coding-agent-api-key" name="api_key" type="password" placeholder="sk-...">
-        <small class="field-hint">写入 <code>.ghe/config.yml</code>，不会被回显。Claude CLI 不需要。</small>
+        <small class="field-hint">写入 <code>.ghe/config.yml</code>，不会被回显。Codex CLI / Claude CLI 不需要。</small>
       </div>
       <div class="field-row" data-coding-agent-row="model">
         <div class="field">

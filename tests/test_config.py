@@ -50,6 +50,18 @@ def test_load_config_rejects_missing_model_keys(tmp_path: Path):
     assert "api_key" in str(exc.value)
 
 
+def test_load_config_accepts_codex_without_api_key_or_model(tmp_path: Path):
+    config_path = _write(
+        tmp_path / "config.yml",
+        {
+            "repo": {"full_name": "acme/widgets"},
+            "model": {"provider": "codex_cli"},
+        },
+    )
+    config = load_config(str(config_path))
+    assert config["model"] == {"provider": "codex_cli"}
+
+
 def test_load_config_lenient_does_not_require_api_key(tmp_path: Path):
     config_path = _write(
         tmp_path / "config.yml",
