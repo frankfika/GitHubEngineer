@@ -259,6 +259,29 @@ def test_repeated_python_verification_does_not_reuse_stale_bytecode(tmp_path):
     assert second["status"] == "passed"
 
 
+def test_frozen_host_verification_discovers_external_python(tmp_path):
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname='x'\nversion='0.0.0'\n",
+        encoding="utf-8",
+    )
+    completed = SimpleNamespace(returncode=0, stdout="1 passed", stderr="")
+    with (
+        patch("src.repair_worker.sys.frozen", True, create=True),
+        patch(
+            "src.repair_worker.find_desktop_executable",
+            side_effect=lambda name: "/opt/homebrew/bin/python3" if name == "python3" else None,
+        ),
+        patch("src.repair_worker.subprocess.run", return_value=completed) as run,
+    ):
+        verification = _verify_changes(
+            tmp_path, {"repair": {"allow_host_verification": True}}
+        )
+
+    assert verification["status"] == "passed"
+    assert run.call_args.args[0][:2] == ["/opt/homebrew/bin/python3", "-m"]
+
+
 def test_demo_job_is_rejected_by_worker_publish_boundary(tmp_path):
     job_path = tmp_path / "job.json"
     job_path.write_text(

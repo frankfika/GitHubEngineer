@@ -223,11 +223,19 @@ def _verify_changes(
             # macOS commonly ships only ``python3``. Use the trusted
             # coordinator interpreter for host-opt-in Python verification
             # instead of assuming a ``python`` shim exists on PATH.
-            python_executable = (
-                find_desktop_executable("python3")
-                or find_desktop_executable("python")
-                or sys.executable
-            )
+            # A source/venv coordinator must reuse its own interpreter: merely
+            # invoking ``.venv/bin/python`` does not put that venv first on
+            # PATH, so discovery can select a system Python without pytest or
+            # the project's installed tooling. A frozen PyInstaller process is
+            # different—``sys.executable`` is the app sidecar, not Python—so
+            # packaged builds deliberately discover an external interpreter.
+            python_executable = sys.executable
+            if getattr(sys, "frozen", False):
+                python_executable = (
+                    find_desktop_executable("python3")
+                    or find_desktop_executable("python")
+                    or sys.executable
+                )
             arguments = (
                 [python_executable, *command[1:]]
                 if command[0] == "python"
