@@ -15,7 +15,7 @@ The brief is a single Markdown file. The decision memory is one YAML file. The h
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![Status: Production/Stable](https://img.shields.io/badge/status-stable-green.svg)](pyproject.toml)
-[![Tests: 376 passing](https://img.shields.io/badge/tests-376%20passing-brightgreen.svg)](tests/)
+[![Tests: 377 passing](https://img.shields.io/badge/tests-377%20passing-brightgreen.svg)](tests/)
 [![CI: GitHub Actions](https://img.shields.io/badge/CI-GitHub%20Actions-blue.svg)](.github/workflows/test.yml)
 [![LLM: OpenAI-compatible](https://img.shields.io/badge/LLM-OpenAI%20compatible-7c3aed.svg)](#model)
 
@@ -533,7 +533,7 @@ github-engineer/
 │   ├── web_ui.py                   # conversation UI shell + /decisions form
 │   └── process_runtime.py          # atomic JSON writer, safe subprocess env
 │
-├── tests/                          # 23 test files / 376 cases, pytest ≥ 9
+├── tests/                          # 23 test files / 377 cases, pytest ≥ 9
 │   ├── test_config.py
 │   ├── test_github_client.py
 │   ├── test_llm_client.py

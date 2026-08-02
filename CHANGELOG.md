@@ -64,6 +64,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Failed repair verification now remains visible in the diff review, includes
+  escaped failure summaries and missing-dependency hints, and can be rerun only
+  after explicit confirmation that repository test code will execute locally.
 - Brief and decision pages now refresh the shared repository/account state,
   and their repository links navigate normally instead of being swallowed by
   the home-only Issue loader.
