@@ -57,6 +57,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   /api/repositories with a fixed owner + monitor pair (no GitHub token
   required). Useful for UI development, screenshots, and the
   failure-recovery flow.
+- **Desktop brief generation.** The brief history page can now start an
+  asynchronous brief job, display progress, and navigate directly to the
+  completed report. Generation works with repositories stored in either the
+  canonical config or the legacy watched-repository list.
 
 ### Changed
 
@@ -84,10 +88,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   repositories cannot exhaust the GitHub API quota.
 - `main.py` catches the `HistoryError` family so a single corrupt history
   file never breaks the user-facing report.
+- Coding-agent configuration is written atomically with mode `0600`; malformed
+  YAML keeps the onboarding UI available but is never overwritten. Existing
+  provider keys can be reused, and failed health checks now include an
+  actionable diagnosis.
+- The Coding Agent status control is now a native keyboard-accessible button,
+  and local-service documentation distinguishes local mutations from the
+  explicitly confirmed GitHub Draft PR write.
 
 ### Tests
 
-- 367 pytest tests cover the CLI, GitHub/LLM clients, web APIs, desktop
+- 376 pytest tests cover the CLI, GitHub/LLM clients, web APIs, desktop
   assets, repair lifecycle, security gates, persistence, and failure recovery.
 
 ## [0.1.0] - 2026-07-21

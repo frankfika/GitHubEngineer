@@ -39,12 +39,12 @@ def load_config(config_path: str | None = None) -> dict[str, Any]:
 
 
 def load_config_lenient(config_path: str | None = None) -> dict[str, Any]:
-    """Load YAML config and expand env vars without running full validation.
+    """Best-effort load YAML config without running full validation.
 
-    Used by read-only subcommands (``--show-latest``, ``--list-decisions``)
-    that need to know the output directory or repo list but do not require
-    a working LLM key. The returned config is still safe to use for
-    ``get_target_repos`` and ``output.output_dir`` lookups.
+    Used by local/onboarding surfaces that must remain available when setup is
+    incomplete or the document is damaged. Missing, unreadable, malformed, or
+    non-mapping documents return an empty mapping; mutation paths must parse
+    the same file strictly before writing so this fallback cannot erase it.
     """
 
     load_dotenv()
@@ -52,9 +52,14 @@ def load_config_lenient(config_path: str | None = None) -> dict[str, Any]:
     if not path.exists():
         raw = _default_config()
     else:
-        with path.open("r", encoding="utf-8") as handle:
-            raw = yaml.safe_load(handle) or {}
-    return _replace_env(raw or {})
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                raw = yaml.safe_load(handle) or {}
+        except (OSError, yaml.YAMLError):
+            return {}
+    if not isinstance(raw, dict):
+        return {}
+    return _replace_env(raw)
 
 
 def get_repo_full_name(config: dict[str, Any], cli_repo: str | None = None) -> str:

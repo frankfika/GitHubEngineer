@@ -195,7 +195,7 @@ a:hover { text-decoration: none; }
 
 /* Coding Agent 顶部状态徽章 — 跟 mode-indicator 并列, 三种状态:
    unconfigured (灰) / configured (绿) / invalid (琥珀). */
-.coding-agent-indicator { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px; font-size: 10px; font-weight: 650; letter-spacing: .02em; cursor: pointer; white-space: nowrap; border: 1px solid var(--line); }
+.coding-agent-indicator { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px; font: inherit; font-size: 10px; font-weight: 650; letter-spacing: .02em; cursor: pointer; white-space: nowrap; border: 1px solid var(--line); appearance: none; }
 .coding-agent-indicator::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .coding-agent-indicator[data-state="unconfigured"] { color: var(--text-3); background: var(--surface-soft); border-color: var(--line); font-weight: 500; }
 .coding-agent-indicator[data-state="configured"] { color: var(--success); background: color-mix(in srgb, var(--success) 12%, transparent); border-color: color-mix(in srgb, var(--success) 35%, transparent); }
@@ -523,6 +523,11 @@ a:hover { text-decoration: none; }
 .page-heading .eyebrow { margin-bottom: 6px; }
 .page-heading h2 { margin: 0; font-size: clamp(24px, 4vw, 32px); line-height: 1.2; letter-spacing: -.035em; }
 .page-heading p { max-width: 560px; margin: 8px 0 0; color: var(--text-2); }
+.brief-generation-controls { display: grid; grid-template-columns: auto minmax(180px, 1fr) auto; align-items: center; gap: 9px; max-width: 680px; margin-top: 18px; }
+.brief-generation-controls label { color: var(--text-2); font-size: 11px; font-weight: 650; }
+.brief-generation-controls select { min-width: 0; }
+.brief-generation-controls .primary-button { min-height: 38px; }
+.brief-generation-controls [role="status"] { grid-column: 2 / -1; min-height: 17px; color: var(--text-2); font-size: 11px; }
 .page-actions { display: flex; gap: 8px; margin-top: 16px; }
 .soft-button, .primary-button {
   display: inline-flex;
@@ -809,6 +814,9 @@ pre { padding: 13px 15px; overflow-x: auto; background: var(--surface-soft); bor
   .monitor-repo-button { flex: 0 0 auto; }
   .conversation, .content-page { padding: 26px 16px 138px; }
   .content-page { padding-bottom: 36px; }
+  .brief-generation-controls { grid-template-columns: 1fr; }
+  .brief-generation-controls label { margin-bottom: -4px; }
+  .brief-generation-controls [role="status"] { grid-column: 1; }
   .message { gap: 10px; margin-bottom: 22px; }
   .avatar { width: 29px; height: 29px; border-radius: 9px; }
   .message-body { max-width: calc(100% - 39px); }
@@ -948,6 +956,9 @@ APP_JS = r"""
   // 不配置时给一个明显的灰色 "未配置" + 配置入口.
   const codingAgentIndicator = qs('#coding-agent-indicator');
   const modeIndicator = qs('#mode-indicator');
+  const briefGenerateRepository = qs('#brief-generate-repository');
+  const briefGenerateButton = qs('#brief-generate-button');
+  const briefGenerateStatus = qs('#brief-generate-status');
   const diffView = qs('#diff-view');
   const diffViewEditor = qs('#diff-view-editor');
   const diffViewSidebar = qs('#diff-view-sidebar-list');
@@ -1002,6 +1013,7 @@ APP_JS = r"""
   let currentRepairJob = null;
   let repairPollTimer = null;
   let connectionPollTimer = null;
+  let briefGenerationTimer = null;
   let repairJobs = [];
   let publishGeneration = 0;
   let repairSessionGeneration = 0;
@@ -1117,6 +1129,55 @@ APP_JS = r"""
       throw error;
     }
     return result;
+  };
+
+  const setBriefGenerationState = (busy, message) => {
+    if (briefGenerateButton) {
+      briefGenerateButton.disabled = Boolean(busy);
+      briefGenerateButton.textContent = busy ? '正在生成…' : '生成新简报';
+      briefGenerateButton.toggleAttribute('aria-busy', Boolean(busy));
+    }
+    if (briefGenerateRepository) briefGenerateRepository.disabled = Boolean(busy);
+    if (briefGenerateStatus) briefGenerateStatus.textContent = message || '';
+  };
+
+  const pollBriefGeneration = async (jobId) => {
+    window.clearTimeout(briefGenerationTimer);
+    try {
+      const job = await fetchJson(`/api/brief-jobs/${encodeURIComponent(jobId)}`);
+      if (job.status === 'completed' && job.url) {
+        setBriefGenerationState(false, '简报已生成，正在打开…');
+        window.location.assign(job.url);
+        return;
+      }
+      if (job.status === 'failed') {
+        setBriefGenerationState(false, job.message || '简报生成失败，请检查配置后重试。');
+        return;
+      }
+      setBriefGenerationState(true, job.message || '正在生成维护简报…');
+      briefGenerationTimer = window.setTimeout(() => pollBriefGeneration(jobId), 1200);
+    } catch (error) {
+      setBriefGenerationState(false, error.message || '暂时无法读取生成进度。');
+    }
+  };
+
+  const startBriefGeneration = async () => {
+    const repository = String(briefGenerateRepository?.value || '').trim();
+    if (!repository) {
+      setBriefGenerationState(false, '请先选择一个仓库。');
+      return;
+    }
+    setBriefGenerationState(true, '正在创建简报任务…');
+    try {
+      const job = await fetchJson('/api/briefs/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repository }),
+      });
+      await pollBriefGeneration(job.id);
+    } catch (error) {
+      setBriefGenerationState(false, error.message || '简报任务启动失败。');
+    }
   };
 
   const relativeTime = (value) => {
@@ -3113,7 +3174,14 @@ APP_JS = r"""
       if (!codingAgentProvider?.value) return '请选择一个 provider';
     } else if (step === 1) {
       const provider = String(codingAgentProvider?.value || '');
-      if (!['codex_cli', 'claude_cli'].includes(provider) && !codingAgentApiKey?.value?.trim()) {
+      const canReuseExistingCredential = Boolean(
+        currentCodingAgent?.configured
+        && currentCodingAgent.provider === (provider === 'custom' ? 'openai_compatible' : provider)
+        && currentCodingAgent.last_error_kind !== 'api_key_invalid'
+      );
+      if (!['codex_cli', 'claude_cli'].includes(provider)
+          && !codingAgentApiKey?.value?.trim()
+          && !canReuseExistingCredential) {
         return '请填 API key（Codex CLI / Claude CLI 不需要 key）';
       }
     } else if (step === 2) {
@@ -3189,7 +3257,9 @@ APP_JS = r"""
     } catch (error) {
       if (codingAgentStatus) {
         codingAgentStatus.className = 'repair-setup-status blocked';
-        codingAgentStatus.innerHTML = `<strong>请求失败</strong><span>${escapeHtml(error.message || '后端没接好, 请稍后重试或检查后端')}</span>`;
+        const title = error.error_kind === 'api_connection_failed' ? '连接测试失败' : '请求失败';
+        const detail = error.error_action || error.message || '后端没接好, 请稍后重试或检查后端';
+        codingAgentStatus.innerHTML = `<strong>${escapeHtml(title)}</strong><span>${escapeHtml(detail)}</span>`;
       }
     }
   };
@@ -3830,6 +3900,10 @@ APP_JS = r"""
     });
   }
 
+  if (briefGenerateButton) {
+    briefGenerateButton.addEventListener('click', startBriefGeneration);
+  }
+
   window.setInterval(() => {
     if (currentRepository && !document.hidden) loadIssues(currentRepository);
   }, 300000);
@@ -3948,7 +4022,7 @@ def render_shell(
       <div class="topbar-title"><span>{escape(context)}</span><span class="topbar-kicker">GitHub 同步 · 人工确认</span></div>
       {repo_switcher}
       <span class="mode-indicator" id="mode-indicator" data-mode="anonymous" title="匿名模式：可浏览、克隆、修复公开仓库；产物留本地。要对外提交 PR 时再连接 GitHub。">匿名浏览</span>
-      <span class="coding-agent-indicator" id="coding-agent-indicator" data-state="unconfigured" data-open-coding-agent-setup title="Coding Agent 状态">未配置 Coding Agent</span>
+      <button class="coding-agent-indicator" id="coding-agent-indicator" type="button" data-state="unconfigured" data-open-coding-agent-setup title="Coding Agent 状态">未配置 Coding Agent</button>
       <div class="topbar-status">GitHub Engineer v1.0</div>
     </header>
     <div class="workspace-scroll">{body}</div>

@@ -71,6 +71,16 @@ def test_load_config_lenient_does_not_require_api_key(tmp_path: Path):
     assert config["repo"]["full_name"] == "acme/widgets"
 
 
+def test_load_config_lenient_survives_malformed_and_non_mapping_yaml(tmp_path: Path):
+    malformed = tmp_path / "malformed.yml"
+    malformed.write_text("model: [unterminated\n", encoding="utf-8")
+    assert load_config_lenient(str(malformed)) == {}
+
+    sequence = tmp_path / "sequence.yml"
+    sequence.write_text("- not\n- a\n- mapping\n", encoding="utf-8")
+    assert load_config_lenient(str(sequence)) == {}
+
+
 def test_get_target_repos_returns_single_when_no_list(tmp_path: Path):
     config = {"repo": {"full_name": "acme/widgets"}}
     assert get_target_repos(config) == ["acme/widgets"]

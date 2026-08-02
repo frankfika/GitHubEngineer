@@ -104,6 +104,9 @@
   // 不配置时给一个明显的灰色 "未配置" + 配置入口.
   const codingAgentIndicator = qs('#coding-agent-indicator');
   const modeIndicator = qs('#mode-indicator');
+  const briefGenerateRepository = qs('#brief-generate-repository');
+  const briefGenerateButton = qs('#brief-generate-button');
+  const briefGenerateStatus = qs('#brief-generate-status');
   const diffView = qs('#diff-view');
   const diffViewEditor = qs('#diff-view-editor');
   const diffViewSidebar = qs('#diff-view-sidebar-list');
@@ -158,6 +161,7 @@
   let currentRepairJob = null;
   let repairPollTimer = null;
   let connectionPollTimer = null;
+  let briefGenerationTimer = null;
   let repairJobs = [];
   let publishGeneration = 0;
   let repairSessionGeneration = 0;
@@ -273,6 +277,55 @@
       throw error;
     }
     return result;
+  };
+
+  const setBriefGenerationState = (busy, message) => {
+    if (briefGenerateButton) {
+      briefGenerateButton.disabled = Boolean(busy);
+      briefGenerateButton.textContent = busy ? '正在生成…' : '生成新简报';
+      briefGenerateButton.toggleAttribute('aria-busy', Boolean(busy));
+    }
+    if (briefGenerateRepository) briefGenerateRepository.disabled = Boolean(busy);
+    if (briefGenerateStatus) briefGenerateStatus.textContent = message || '';
+  };
+
+  const pollBriefGeneration = async (jobId) => {
+    window.clearTimeout(briefGenerationTimer);
+    try {
+      const job = await fetchJson(`/api/brief-jobs/${encodeURIComponent(jobId)}`);
+      if (job.status === 'completed' && job.url) {
+        setBriefGenerationState(false, '简报已生成，正在打开…');
+        window.location.assign(job.url);
+        return;
+      }
+      if (job.status === 'failed') {
+        setBriefGenerationState(false, job.message || '简报生成失败，请检查配置后重试。');
+        return;
+      }
+      setBriefGenerationState(true, job.message || '正在生成维护简报…');
+      briefGenerationTimer = window.setTimeout(() => pollBriefGeneration(jobId), 1200);
+    } catch (error) {
+      setBriefGenerationState(false, error.message || '暂时无法读取生成进度。');
+    }
+  };
+
+  const startBriefGeneration = async () => {
+    const repository = String(briefGenerateRepository?.value || '').trim();
+    if (!repository) {
+      setBriefGenerationState(false, '请先选择一个仓库。');
+      return;
+    }
+    setBriefGenerationState(true, '正在创建简报任务…');
+    try {
+      const job = await fetchJson('/api/briefs/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repository }),
+      });
+      await pollBriefGeneration(job.id);
+    } catch (error) {
+      setBriefGenerationState(false, error.message || '简报任务启动失败。');
+    }
   };
 
   const relativeTime = (value) => {
@@ -2269,7 +2322,14 @@
       if (!codingAgentProvider?.value) return '请选择一个 provider';
     } else if (step === 1) {
       const provider = String(codingAgentProvider?.value || '');
-      if (!['codex_cli', 'claude_cli'].includes(provider) && !codingAgentApiKey?.value?.trim()) {
+      const canReuseExistingCredential = Boolean(
+        currentCodingAgent?.configured
+        && currentCodingAgent.provider === (provider === 'custom' ? 'openai_compatible' : provider)
+        && currentCodingAgent.last_error_kind !== 'api_key_invalid'
+      );
+      if (!['codex_cli', 'claude_cli'].includes(provider)
+          && !codingAgentApiKey?.value?.trim()
+          && !canReuseExistingCredential) {
         return '请填 API key（Codex CLI / Claude CLI 不需要 key）';
       }
     } else if (step === 2) {
@@ -2345,7 +2405,9 @@
     } catch (error) {
       if (codingAgentStatus) {
         codingAgentStatus.className = 'repair-setup-status blocked';
-        codingAgentStatus.innerHTML = `<strong>请求失败</strong><span>${escapeHtml(error.message || '后端没接好, 请稍后重试或检查后端')}</span>`;
+        const title = error.error_kind === 'api_connection_failed' ? '连接测试失败' : '请求失败';
+        const detail = error.error_action || error.message || '后端没接好, 请稍后重试或检查后端';
+        codingAgentStatus.innerHTML = `<strong>${escapeHtml(title)}</strong><span>${escapeHtml(detail)}</span>`;
       }
     }
   };
@@ -2984,6 +3046,10 @@
         button.textContent = '添加到清单';
       }
     });
+  }
+
+  if (briefGenerateButton) {
+    briefGenerateButton.addEventListener('click', startBriefGeneration);
   }
 
   window.setInterval(() => {
