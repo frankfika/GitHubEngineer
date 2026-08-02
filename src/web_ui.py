@@ -678,6 +678,14 @@ pre { padding: 13px 15px; overflow-x: auto; background: var(--surface-soft); bor
 .repair-verification[data-status="passed"] strong { color: var(--success); }
 .repair-verification[data-status="failed"] strong { color: var(--danger); }
 .repair-verification[data-status="unverified"] strong { color: var(--warning); }
+.diff-view-verification { padding: 0 15px 12px; }
+.diff-view-verification:empty { display: none; }
+.diff-view-verification .repair-verification { margin-top: 0; }
+.verification-recovery { margin-top: 8px; color: var(--text-2); font-size: 12px; line-height: 1.5; }
+.verification-recovery .suggestions { margin-top: 8px; }
+.verification-log { margin-top: 8px; }
+.verification-log summary { color: var(--text-2); cursor: pointer; font-weight: 650; }
+.verification-log pre { max-height: 180px; margin: 8px 0 0; padding: 10px; overflow: auto; border-radius: 7px; background: var(--surface); color: var(--text-2); font: 11px/1.45 var(--mono); white-space: pre-wrap; }
 .repair-error-detail { margin-top: 8px; color: var(--text-2); font-size: 11px; line-height: 1.55; }
 .repair-error-card { display: grid; gap: 4px; margin-top: 10px; padding: 12px 14px; border-radius: 9px; }
 .repair-error-card strong { font-size: 13px; }
@@ -965,6 +973,7 @@ APP_JS = r"""
   const diffViewStatus = qs('#diff-view-status');
   const diffViewStats = qs('#diff-view-stats');
   const diffViewTitle = qs('#diff-view-title');
+  const diffViewVerification = qs('#diff-view-verification');
   const diffViewUpgrade = qs('#diff-view-upgrade');
   const diffAcceptAll = qs('#diff-accept-all');
   const diffRejectAll = qs('#diff-reject-all');
@@ -1079,6 +1088,35 @@ APP_JS = r"""
     };
     const [title, fallback] = labels[verification.status];
     return `<div class="repair-verification" data-status="${verification.status}"><strong>${title}</strong><span>${escapeHtml(verification.detail || fallback)}</span></div>`;
+  };
+
+  const renderDiffVerification = (job) => {
+    const verification = repairVerification(job);
+    const raw = job?.verification;
+    const commands = raw && typeof raw === 'object' && Array.isArray(raw.commands)
+      ? raw.commands
+      : [];
+    const output = commands.map((command) => [
+      command?.display ? `$ ${command.display}` : '',
+      command?.stdout_summary || '',
+      command?.stderr_summary || '',
+    ].filter(Boolean).join('\n')).filter(Boolean).join('\n\n');
+    let recovery = '';
+    if (verification.status === 'failed') {
+      const modules = Array.from(output.matchAll(/No module named ['"]([^'"]+)['"]/g))
+        .map((match) => match[1])
+        .filter((value, index, values) => values.indexOf(value) === index);
+      const dependencyHint = modules.length
+        ? `测试环境缺少依赖：${modules.join('、')}。请先在可信的项目环境中安装依赖，然后重新验证。`
+        : '查看失败摘要，修复测试环境或代码后重新验证。';
+      const log = output
+        ? `<details class="verification-log"><summary>查看失败摘要</summary><pre>${escapeHtml(output.slice(-6000))}</pre></details>`
+        : '';
+      recovery = `<div class="verification-recovery">${escapeHtml(dependencyHint)}<div class="suggestions"><button class="suggestion primary-suggestion" type="button" data-retry-verification>重新运行验证</button></div>${log}</div>`;
+    } else if (verification.status === 'unverified' && verification.reason === 'sandbox_unavailable') {
+      recovery = '<div class="verification-recovery">尚未运行测试。继续前会再次确认执行不可信仓库代码的风险。<div class="suggestions"><button class="suggestion primary-suggestion" type="button" data-allow-host-verification>我理解风险，在本机运行测试</button></div></div>';
+    }
+    return `${renderVerification(job)}${recovery}`;
   };
 
   const providerDataBoundary = (job = null) => {
@@ -2708,6 +2746,7 @@ APP_JS = r"""
     if (!diffView) return;
     const jobId = String(job?.id || '');
     if (!jobId) return;
+    if (diffViewVerification) diffViewVerification.innerHTML = renderDiffVerification(job);
     _diffLoadController?.abort();
     const controller = new AbortController();
     _diffLoadController = controller;
@@ -3400,6 +3439,25 @@ APP_JS = r"""
         showToast(error.message || '本机验证启动失败');
         button.disabled = false;
         button.textContent = '我理解风险，在本机运行测试';
+      });
+      return;
+    }
+    if (event.target.closest('[data-retry-verification]') && currentRepairJob) {
+      if (!window.confirm('将再次在本机执行这个仓库的测试代码。确认已经处理失败原因并继续吗？')) return;
+      const button = event.target.closest('[data-retry-verification]');
+      button.disabled = true;
+      button.textContent = '正在重新验证…';
+      fetchJson(`/api/repairs/${encodeURIComponent(currentRepairJob.id)}/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ allow_host_verification: true }),
+      }).then((result) => {
+        renderRepairSession(result);
+        pollRepairJob(result.id);
+      }).catch((error) => {
+        showToast(error.message || '重新验证启动失败');
+        button.disabled = false;
+        button.textContent = '重新运行验证';
       });
       return;
     }
@@ -4207,6 +4265,7 @@ def render_shell(
       <span class="diff-view-stats" id="diff-view-stats">正在加载…</span>
       <span class="diff-view-upgrade" id="diff-view-upgrade" hidden>已升级到完整模式 · 之前接受的 hunk 已保留</span>
     </div>
+    <div class="diff-view-verification" id="diff-view-verification" aria-live="polite"></div>
     <div class="diff-view-body">
       <div class="diff-view-editor" id="diff-view-editor"></div>
       <aside class="diff-view-sidebar" id="diff-view-sidebar">

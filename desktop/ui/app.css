@@ -665,6 +665,14 @@ pre { padding: 13px 15px; overflow-x: auto; background: var(--surface-soft); bor
 .repair-verification[data-status="passed"] strong { color: var(--success); }
 .repair-verification[data-status="failed"] strong { color: var(--danger); }
 .repair-verification[data-status="unverified"] strong { color: var(--warning); }
+.diff-view-verification { padding: 0 15px 12px; }
+.diff-view-verification:empty { display: none; }
+.diff-view-verification .repair-verification { margin-top: 0; }
+.verification-recovery { margin-top: 8px; color: var(--text-2); font-size: 12px; line-height: 1.5; }
+.verification-recovery .suggestions { margin-top: 8px; }
+.verification-log { margin-top: 8px; }
+.verification-log summary { color: var(--text-2); cursor: pointer; font-weight: 650; }
+.verification-log pre { max-height: 180px; margin: 8px 0 0; padding: 10px; overflow: auto; border-radius: 7px; background: var(--surface); color: var(--text-2); font: 11px/1.45 var(--mono); white-space: pre-wrap; }
 .repair-error-detail { margin-top: 8px; color: var(--text-2); font-size: 11px; line-height: 1.55; }
 .repair-error-card { display: grid; gap: 4px; margin-top: 10px; padding: 12px 14px; border-radius: 9px; }
 .repair-error-card strong { font-size: 13px; }

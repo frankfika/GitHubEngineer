@@ -11,7 +11,7 @@
 ## 如何提 PR
 
 1. Fork 仓库, 从 `main` 切出 feature 分支 (`feat/xxx` 或 `fix/xxx`)。
-2. 开发完成后跑 `make test` (或 `pytest tests/ -v`) 确认 **68/68** pass。
+2. 开发完成后跑 `make test` (或 `.venv/bin/pytest tests/ -v`) 确认全部测试通过。
 3. 一个 PR 只做一件事, 描述写清"改了什么 / 为什么 / 怎么验证"。
 4. 关联对应 issue (如有), 在 review 通过前保持可 rebase。
 
@@ -29,9 +29,9 @@ make install-dev
 ## 测试
 
 ```bash
-make test                          # 全部 68 个测试
-pytest tests/test_config.py -v     # 单文件
-pytest -k delegation -v            # 按名字筛选
+make test                          # 全部 377 个测试
+.venv/bin/pytest tests/test_config.py -v  # 单文件
+.venv/bin/pytest -k delegation -v         # 按名字筛选
 make test-fast                     # CI 友好, 不带 -v
 make smoke                         # e2e smoke (list-decisions + config parse)
 ```

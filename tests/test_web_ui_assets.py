@@ -89,6 +89,19 @@ def test_unverified_repair_offers_explicit_host_verification_consent() -> None:
     assert "JSON.stringify({ allow_host_verification: true })" in source
 
 
+def test_failed_verification_remains_visible_and_can_be_retried_from_diff() -> None:
+    source = APP_JS
+    shell_source = (ROOT / "src/web_ui.py").read_text(encoding="utf-8")
+
+    assert "const renderDiffVerification = (job) =>" in source
+    assert "No module named" in source
+    assert "测试环境缺少依赖" in source
+    assert "data-retry-verification" in source
+    assert "查看失败摘要" in source
+    assert "将再次在本机执行这个仓库的测试代码" in source
+    assert 'id="diff-view-verification" aria-live="polite"' in shell_source
+
+
 def test_repair_ux_exposes_real_phases_verification_and_data_boundary() -> None:
     source = APP_JS
     shell_source = (ROOT / "src/web_ui.py").read_text(encoding="utf-8")
