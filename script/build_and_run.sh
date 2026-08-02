@@ -77,6 +77,7 @@ case "$MODE" in
       echo "Release app bundle was not produced." >&2
       exit 1
     fi
+    "$ROOT_DIR/script/verify_desktop_bundle.sh" "$APP_BUNDLE" >>"$LOG_FILE" 2>&1
     /usr/bin/open -na "$APP_BUNDLE"
     for _ in $(seq 1 300); do
       if pgrep -x "$APP_NAME" >/dev/null 2>&1 \

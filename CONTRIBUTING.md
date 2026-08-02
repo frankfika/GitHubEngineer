@@ -29,7 +29,7 @@ make install-dev
 ## 测试
 
 ```bash
-make test                          # 全部 377 个测试
+make test                          # 全部 382 个测试
 .venv/bin/pytest tests/test_config.py -v  # 单文件
 .venv/bin/pytest -k delegation -v         # 按名字筛选
 make test-fast                     # CI 友好, 不带 -v

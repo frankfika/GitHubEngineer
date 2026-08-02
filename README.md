@@ -15,7 +15,7 @@ The brief is a single Markdown file. The decision memory is one YAML file. The h
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![Status: Production/Stable](https://img.shields.io/badge/status-stable-green.svg)](pyproject.toml)
-[![Tests: 377 passing](https://img.shields.io/badge/tests-377%20passing-brightgreen.svg)](tests/)
+[![Tests: 382 passing](https://img.shields.io/badge/tests-382%20passing-brightgreen.svg)](tests/)
 [![CI: GitHub Actions](https://img.shields.io/badge/CI-GitHub%20Actions-blue.svg)](.github/workflows/test.yml)
 [![LLM: OpenAI-compatible](https://img.shields.io/badge/LLM-OpenAI%20compatible-7c3aed.svg)](#model)
 
@@ -127,7 +127,7 @@ The web UI opens ready to work. When you open `http://127.0.0.1:8765/ui/`, it re
 - **Pick a repo from the top-bar dropdown** — same behavior, also an explicit choice.
 - **Click 「+ 添加仓库」** in the top right to paste a URL or pick from your owned repos. The added repo is auto-selected and fetched.
 
-A fresh install with no tracked repository keeps the empty-state home and shows the add-repository onboarding. It does not make a repository request until one is added.
+A fresh install with no tracked repository keeps the empty-state home and shows status-driven onboarding. Existing GitHub and Coding Agent connections are marked complete instead of asking the user to configure them again. It does not make a repository request until one is added, and the first added repository is selected and fetched exactly once.
 
 ---
 
@@ -533,7 +533,7 @@ github-engineer/
 │   ├── web_ui.py                   # conversation UI shell + /decisions form
 │   └── process_runtime.py          # atomic JSON writer, safe subprocess env
 │
-├── tests/                          # 23 test files / 377 cases, pytest ≥ 9
+├── tests/                          # 23 test files / 382 cases, pytest ≥ 9
 │   ├── test_config.py
 │   ├── test_github_client.py
 │   ├── test_llm_client.py
@@ -807,15 +807,15 @@ The colour rules (warning amber / danger red / neutral grey) are stable across a
 
 ## §C. Onboarding (first-launch)
 
-The first time a browser opens the UI on a given origin, a small **onboarding card** appears above the sidebar with three items:
+The first time a browser opens the UI on a given origin with no tracked repositories, a status-driven **onboarding card** fills the main workspace with three items:
 
-- **完整模式** (owner): connect both `gh` and `claude` to publish Draft PRs.
-- **Fork 模式** (external + `gh` + `claude`): edit in your fork, then open a PR.
-- **匿名模式** (public + `claude`): browse, clone, edit; artefacts stay local.
+- **Coding Agent**: the configured provider is marked complete when healthy; otherwise the card opens the provider setup.
+- **Repository**: paste a repository URL or choose from the authenticated account's repositories.
+- **GitHub**: an existing `gh` login is marked complete; anonymous public-repository use remains available when disconnected.
 
-The card footer always says: **匿名浏览可用 · 连接 GitHub 解锁 PR**. A *以后再说* soft button closes the card without persisting the dismissal.
+The card copy and primary action reflect the real connection state. A *稍后再说* button persists that the welcome explanation was seen, while preserving a usable add-repository empty state.
 
-Once dismissed, the card is hidden via `localStorage['ghe-onboarding-seen'] = '1'`. The flag is per-origin; switching machines or GitHub accounts re-triggers onboarding (intentional — a new account may have different permissions).
+Once dismissed, the welcome explanation is replaced via `localStorage['ghe-onboarding-seen'] = '1'` by the compact add-repository empty state. The flag is per-origin; switching machines or GitHub accounts re-triggers onboarding.
 
 To re-trigger onboarding on the same origin — for example, after a permissions change — clear the key from devtools, or run in the console:
 
