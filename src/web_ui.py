@@ -73,6 +73,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: none; }
+.skip-link { position: fixed; z-index: 1000; top: 8px; left: 8px; padding: 9px 12px; color: var(--text); background: var(--surface-solid); border: 2px solid var(--accent); border-radius: 8px; transform: translateY(-160%); transition: transform .12s ease; }
+.skip-link:focus { transform: translateY(0); }
 
 .app-shell { display: flex; width: 100%; height: 100dvh; }
 .sidebar {
@@ -415,6 +417,7 @@ a:hover { text-decoration: none; }
 .onboarding-steps { display: grid; gap: 12px; margin: 28px 0; padding: 20px; background: var(--surface-soft); border: 1px solid var(--line); border-radius: 12px; text-align: left; }
 .onboarding-step { display: flex; align-items: center; gap: 12px; }
 .step-number { display: grid; place-items: center; width: 28px; height: 28px; flex: 0 0 28px; color: var(--accent); background: var(--accent-soft); border-radius: 50%; font-size: 13px; font-weight: 600; }
+.step-number.complete { color: var(--success); background: color-mix(in srgb, var(--success) 14%, transparent); }
 .step-text { color: var(--text-2); font-size: 14px; }
 .onboarding-actions { display: flex; gap: 10px; margin-top: 24px; }
 .onboarding-hint { margin-top: 16px; padding: 10px 16px; color: var(--text-2); background: var(--accent-soft); border-radius: 8px; font-size: 13px; line-height: 1.5; }
@@ -1006,6 +1009,7 @@ APP_JS = r"""
   let pendingIssueTask = null;
   let currentCanModify = false;
   let currentGithubAuthenticated = false;
+  let currentGithubAccount = '';
   let currentRepairMode = 'fork_pr';
   let repairCapabilities = null;
   // 缓存后端 render_repair_capabilities 返回的 coding_agent 子字段, 给
@@ -1509,12 +1513,29 @@ APP_JS = r"""
       document.documentElement.classList.add('no-repositories');
       return;
     }
-    // 第一次: 用 JS 替换 onboarding 内部内容, 不动 server-rendered HTML.
-    // 之前是"添加仓库"的旧版 3 步, 改成 provider 抽象后的 3 步:
-    //   Step 1 欢迎: GitHubEngineer 是干啥的
-    //   Step 2 配置 Coding Agent: 选 provider + 填 key + 测连通
-    //   Step 3 连接 GitHub (可选): 公开仓库匿名可用, 连 GitHub 解锁 Fork/PR
-    // 底部 "稍后再说" 写 localStorage 标记跳过.
+    // 三个首屏状态来自并行请求，欢迎页必须随最终状态重渲染，不能在
+    // 顶栏已经显示“已连接”时仍要求用户重复配置。
+    const codingAgentReady = Boolean(currentCodingAgent?.configured && currentCodingAgent?.healthy);
+    const githubReady = Boolean(currentGithubAuthenticated);
+    const codingAgentLabel = currentCodingAgent?.provider
+      ? `${currentCodingAgent.provider} · ${currentCodingAgent.model || '默认 model'}`
+      : 'Coding Agent';
+    const githubLabel = currentGithubAccount ? `@${currentGithubAccount.replace(/^@/, '')}` : 'GitHub';
+    const welcomeTitle = codingAgentReady && githubReady
+      ? '准备完成，只差添加仓库'
+      : '欢迎使用 GitHub Engineer';
+    const welcomeCopy = codingAgentReady && githubReady
+      ? `${codingAgentLabel} 和 ${githubLabel} 已连接。添加仓库后即可读取 Issue、生成简报和准备修复草稿。`
+      : 'GitHub Engineer 用 AI 帮你自动修 Issue、生成 PR 草稿。完成下面尚未就绪的项目后即可开始。';
+    const primaryAction = codingAgentReady
+      ? '<button class="primary-button" type="button" data-onboarding-add-repo>添加仓库</button>'
+      : '<button class="primary-button" type="button" data-open-coding-agent-setup>配置 Coding Agent</button>';
+    const secondaryAction = codingAgentReady
+      ? '<button class="soft-button" type="button" data-open-coding-agent-setup>查看 Coding Agent</button>'
+      : '<button class="soft-button" type="button" data-onboarding-add-repo>添加仓库</button>';
+    const connectionHint = githubReady
+      ? `${githubLabel} 已连接：添加仓库后可使用 Fork、Issue 和 Draft PR 功能。`
+      : '匿名模式可浏览、克隆和修复公开仓库，产物留本地；连接 GitHub 后可使用 Fork 和 Draft PR。';
     repositoryOnboarding.innerHTML = `
       <div class="onboarding-icon">
         <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -1522,29 +1543,29 @@ APP_JS = r"""
           <circle cx="12" cy="12" r="9"/>
         </svg>
       </div>
-      <h1>欢迎使用 GitHub Engineer</h1>
-      <p>GitHub Engineer 用 AI 帮你自动修 Issue、生成 PR 草稿。先花一分钟配两样东西，之后就能一键启动修复。</p>
+      <h1>${escapeHtml(welcomeTitle)}</h1>
+      <p>${escapeHtml(welcomeCopy)}</p>
       <ol class="onboarding-steps">
         <li class="onboarding-step">
-          <span class="step-number">1</span>
-          <span class="step-text"><strong>配置 Coding Agent</strong> · 选你常用的 LLM（OpenAI / DeepSeek / Anthropic / Claude Code CLI / 自托管）</span>
+          <span class="step-number${codingAgentReady ? ' complete' : ''}">${codingAgentReady ? '✓' : '1'}</span>
+          <span class="step-text"><strong>${codingAgentReady ? 'Coding Agent 已就绪' : '配置 Coding Agent'}</strong> · ${escapeHtml(codingAgentReady ? codingAgentLabel : '选择 Codex CLI、OpenAI、DeepSeek、Anthropic 或自托管模型')}</span>
         </li>
         <li class="onboarding-step">
           <span class="step-number">2</span>
           <span class="step-text"><strong>添加仓库</strong> · 粘贴 GitHub 仓库地址，或从你的仓库里选</span>
         </li>
         <li class="onboarding-step">
-          <span class="step-number">3</span>
-          <span class="step-text"><strong>连接 GitHub（可选）</strong> · 公开仓库匿名可用；连接后解锁 Fork 和 Draft PR</span>
+          <span class="step-number${githubReady ? ' complete' : ''}">${githubReady ? '✓' : '3'}</span>
+          <span class="step-text"><strong>${githubReady ? 'GitHub 已连接' : '连接 GitHub（可选）'}</strong> · ${escapeHtml(githubReady ? githubLabel : '公开仓库匿名可用；连接后解锁 Fork 和 Draft PR')}</span>
         </li>
       </ol>
       <div class="onboarding-actions">
-        <button class="primary-button" type="button" data-open-coding-agent-setup>配置 Coding Agent</button>
-        <button class="soft-button" type="button" data-onboarding-add-repo>添加仓库</button>
+        ${primaryAction}
+        ${secondaryAction}
         <button class="soft-button" type="button" data-onboarding-skip>稍后再说</button>
       </div>
       <div class="onboarding-hint">
-        匿名模式：可浏览、克隆、修复公开仓库，产物留本地。要对外提交 PR 时再连 GitHub。
+        ${escapeHtml(connectionHint)}
       </div>`;
     repositoryOnboarding.hidden = false;
     if (root) root.classList.add('no-repositories');
@@ -1644,6 +1665,7 @@ APP_JS = r"""
       last_error_kind: String(caPayload.last_error_kind || '').trim(),
     };
     updateCodingAgentIndicator();
+    if (root?.classList.contains('no-repositories')) showOnboardingIfFirstTime();
     if (currentIssues.length) renderIssueInbox(currentIssues);
   };
 
@@ -1782,6 +1804,8 @@ APP_JS = r"""
           ? '账号已连接，点击查看说明'
           : '公开仓库无需连接；点击了解更多账号功能';
       }
+      currentGithubAuthenticated = Boolean(result.viewer);
+      currentGithubAccount = String(result.viewer || '');
       setConnectionPanel(
         'account',
         result.viewer ? 'ready' : 'optional',
@@ -1913,11 +1937,15 @@ APP_JS = r"""
       try { window.localStorage.setItem('ghe:selected-repository', result.full_name); } catch (_) {}
       monitorDialog?.close();
       monitorForm?.reset();
-      await loadRepositories();
-      // 用户主动添加仓库, 视为「明确要监控」, 自动拉一次数据
-      // (如果失败, heading 会被回滚到失败态, 用户可以重试或换别的).
+      if (ownedRepoSearch) ownedRepoSearch.value = '';
+      if (ownedPickerPanel) ownedPickerPanel.hidden = true;
+      if (ownedRepoList) ownedRepoList.innerHTML = '';
+      ownedRepositories = [];
       showToast(`${result.full_name} 已添加到清单, 开始拉取数据…`);
-      await loadIssues(result.full_name);
+      // loadRepositories 会恢复刚写入的 selected-repository，并且只拉取
+      // 一次该仓库的 Issue。不要在它之后再次 loadIssues，避免首启重复等待
+      // 和浪费 GitHub API 配额。
+      await loadRepositories();
     } catch (error) {
       showToast(error.message || '无法添加仓库');
       if (button) {
@@ -4056,6 +4084,7 @@ def render_shell(
   <link rel="stylesheet" href="/ui/app.css">
 </head>
 <body>
+<a class="skip-link" href="#main-workspace">跳到主要内容</a>
 <div class="app-shell">
   <aside class="sidebar">
     <a class="brand" href="/ui/" aria-label="GitHub Engineer 首页">
@@ -4075,7 +4104,7 @@ def render_shell(
     </section>
     <div class="sidebar-footer"><span class="online">本地服务在线</span></div>
   </aside>
-  <main class="workspace">
+  <main class="workspace" id="main-workspace" tabindex="-1">
     <header class="topbar">
       <div class="topbar-title"><span>{escape(context)}</span><span class="topbar-kicker">GitHub 同步 · 人工确认</span></div>
       {repo_switcher}

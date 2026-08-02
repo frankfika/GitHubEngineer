@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="/ui/app.css">
 </head>
 <body>
+  <a class="skip-link" href="#main-workspace">跳到主要内容</a>
   <div class="app-shell" id="desktop-bootstrap">
     <aside class="sidebar">
       <div class="brand">
@@ -16,13 +17,13 @@
       </div>
       <div class="sidebar-footer"><span class="online">桌面应用</span></div>
     </aside>
-    <main class="workspace">
+    <main class="workspace" id="main-workspace" tabindex="-1">
       <section class="content-page" aria-live="polite">
         <div class="empty-state">
           <h1>正在准备工作区</h1>
           <p id="desktop-bootstrap-status">正在连接本地 GitHub Engineer 服务…</p>
           <button class="primary-button" id="desktop-bootstrap-retry" type="button">正在连接…</button>
-          <p class="brief-card-meta">如果服务未自动启动，也可以在项目目录运行 <code>ghe --serve</code>。</p>
+          <p class="brief-card-meta">前端与本地服务已包含在应用中。如果长时间没有完成，请退出并重新打开应用。</p>
         </div>
       </section>
     </main>

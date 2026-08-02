@@ -102,3 +102,26 @@ def test_run_action_verifies_the_packaged_app_without_accepting_a_stale_port() -
     assert "Port 8765 is already used by an unrelated process" in script
     assert "Refusing to report a stale service as this build" in script
     assert "nohup npm run desktop" not in script
+
+
+def test_release_build_requires_a_unified_frontend_backend_bundle() -> None:
+    root = Path(__file__).resolve().parents[1]
+    verifier = (root / "script" / "verify_desktop_bundle.sh").read_text(
+        encoding="utf-8"
+    )
+    run_script = (root / "script" / "build_and_run.sh").read_text(encoding="utf-8")
+    workflow = (root / ".github" / "workflows" / "desktop-release.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "github-engineer-desktop" in verifier
+    assert "github-engineer-backend" in verifier
+    assert "Frontend/backend architecture mismatch" in verifier
+    assert "Packaged backend has non-system runtime dependencies" in verifier
+    assert "codesign --verify --deep --strict" in verifier
+    assert "hdiutil verify" in verifier
+    assert "hdiutil attach -readonly -nobrowse" in verifier
+    assert "cmp -s" in verifier
+    assert "DMG contains a stale or mismatched executable" in verifier
+    assert 'verify_desktop_bundle.sh" "$APP_BUNDLE"' in run_script
+    assert "run: ./script/verify_desktop_bundle.sh" in workflow

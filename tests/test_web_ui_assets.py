@@ -45,6 +45,14 @@ def test_packaged_javascript_is_valid_and_has_race_guards() -> None:
     assert "Date.now() + 20000" in source
 
 
+def test_packaged_bootstrap_promises_an_embedded_backend() -> None:
+    bootstrap = (ROOT / "desktop" / "index.html").read_text(encoding="utf-8")
+
+    assert "前端与本地服务已包含在应用中" in bootstrap
+    assert "ghe --serve" not in bootstrap
+    assert '<a class="skip-link" href="#main-workspace">跳到主要内容</a>' in bootstrap
+
+
 def test_configured_repository_is_selected_and_loaded_on_startup() -> None:
     source = APP_JS
 
@@ -100,6 +108,38 @@ def test_failed_verification_remains_visible_and_can_be_retried_from_diff() -> N
     assert "查看失败摘要" in source
     assert "将再次在本机执行这个仓库的测试代码" in source
     assert 'id="diff-view-verification" aria-live="polite"' in shell_source
+
+
+def test_first_launch_onboarding_reflects_real_connection_state() -> None:
+    source = APP_JS
+
+    assert "const codingAgentReady = Boolean(currentCodingAgent?.configured && currentCodingAgent?.healthy)" in source
+    assert "currentGithubAuthenticated = Boolean(result.viewer)" in source
+    assert "currentGithubAccount = String(result.viewer || '')" in source
+    assert "准备完成，只差添加仓库" in source
+    assert "Coding Agent 已就绪" in source
+    assert "GitHub 已连接" in source
+    assert "if (root?.classList.contains('no-repositories')) showOnboardingIfFirstTime()" in source
+
+
+def test_shell_has_keyboard_skip_link() -> None:
+    shell_source = (ROOT / "src/web_ui.py").read_text(encoding="utf-8")
+
+    assert '<a class="skip-link" href="#main-workspace">跳到主要内容</a>' in shell_source
+    assert '<main class="workspace" id="main-workspace" tabindex="-1">' in shell_source
+    assert ".skip-link:focus" in shell_source
+
+
+def test_adding_repository_does_not_fetch_issues_twice() -> None:
+    source = APP_JS
+    add_flow = source[source.index("const addRepositoryToList = async") :]
+    add_flow = add_flow[: add_flow.index("const appendMessage")]
+
+    assert "await loadRepositories()" in add_flow
+    assert "await loadIssues(" not in add_flow
+    assert "if (ownedPickerPanel) ownedPickerPanel.hidden = true" in add_flow
+    assert "if (ownedRepoSearch) ownedRepoSearch.value = ''" in add_flow
+    assert "ownedRepositories = []" in add_flow
 
 
 def test_repair_ux_exposes_real_phases_verification_and_data_boundary() -> None:

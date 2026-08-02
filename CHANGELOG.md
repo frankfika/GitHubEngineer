@@ -64,6 +64,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- macOS release verification now requires one unified app bundle containing
+  both the Tauri frontend executable and the frozen Python backend, verifies
+  matching architectures and embedded runtime dependencies, and validates the
+  generated DMG before launch or artifact upload.
+- First-launch onboarding now reflects the actual GitHub and Coding Agent
+  connection state, avoids duplicate Issue fetches after adding the first
+  repository, resets the repository picker after success, and provides a
+  keyboard skip link.
 - Failed repair verification now remains visible in the diff review, includes
   escaped failure summaries and missing-dependency hints, and can be rerun only
   after explicit confirmation that repository test code will execute locally.
@@ -101,7 +109,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 
-- 376 pytest tests cover the CLI, GitHub/LLM clients, web APIs, desktop
+- 382 pytest tests cover the CLI, GitHub/LLM clients, web APIs, desktop
   assets, repair lifecycle, security gates, persistence, and failure recovery.
 
 ## [0.1.0] - 2026-07-21

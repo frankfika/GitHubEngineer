@@ -100,11 +100,7 @@ jobs:
 
       - name: Verify ad-hoc build
         if: ${{ !inputs.publish_release }}
-        run: |
-          app="src-tauri/target/release/bundle/macos/GitHub Engineer.app"
-          dmg="$(find src-tauri/target/release/bundle/dmg -name '*.dmg' -print -quit)"
-          codesign --verify --deep --strict --verbose=2 "$app"
-          hdiutil verify "$dmg"
+        run: ./script/verify_desktop_bundle.sh
 
       - name: Upload installable artifacts
         if: ${{ !inputs.publish_release }}
