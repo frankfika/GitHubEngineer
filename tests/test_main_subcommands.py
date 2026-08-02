@@ -10,7 +10,9 @@ from unittest.mock import patch
 import yaml
 
 from src.main import (
+    _read_config_yaml_strict,
     _safe_local_directory,
+    _write_config_yaml,
     _write_config_repositories,
     main,
     show_latest,
@@ -18,6 +20,35 @@ from src.main import (
 
 
 class RepositoryConfigPersistenceTest(unittest.TestCase):
+    def test_strict_config_reader_accepts_empty_document(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / "config.yml"
+            target.write_text("", encoding="utf-8")
+
+            self.assertEqual(_read_config_yaml_strict(target), {})
+
+    def test_config_write_is_atomic_private_and_preserves_complete_document(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / ".ghe" / "config.yml"
+            payload = {
+                "repos": ["acme/widgets"],
+                "coding_agent": {
+                    "provider": "openai_compatible",
+                    "api_key": "secret-value",
+                    "model": "test-model",
+                },
+            }
+
+            _write_config_yaml(target, payload)
+
+            self.assertEqual(yaml.safe_load(target.read_text(encoding="utf-8")), payload)
+            self.assertEqual(target.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(list(target.parent.glob(".config.yml.*.tmp")), [])
+
     def test_repository_list_write_is_canonical_atomic_and_private(self):
         import tempfile
 

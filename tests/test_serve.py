@@ -224,6 +224,57 @@ class ServeSubcommandTest(unittest.TestCase):
                 process.kill()
                 process.wait()
 
+    def test_coding_agent_configure_does_not_overwrite_malformed_config(self):
+        port = _free_port()
+        config_path = self.directory / "malformed-config.yml"
+        original = "model: [unterminated\n"
+        config_path.write_text(original, encoding="utf-8")
+        env = _server_env(port)
+        # Avoid invoking the interactive GitHub CLI token resolver when the
+        # intentionally malformed document cannot provide a token.
+        env["GITHUB_TOKEN"] = "test"
+        process = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "src.main",
+                "--config",
+                str(config_path),
+                "--serve",
+                "--serve-host",
+                "127.0.0.1",
+            ],
+            cwd=str(self.directory),
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        try:
+            _wait_for_server(port)
+            status, _, body = _http_post(
+                port,
+                "/api/coding-agent/configure",
+                json.dumps(
+                    {
+                        "provider": "openai_compatible",
+                        "base_url": "http://127.0.0.1:9999/v1",
+                        "api_key": "must-not-be-written",
+                        "model": "test-model",
+                    }
+                ).encode("utf-8"),
+                "application/json",
+            )
+            self.assertEqual(status, 409)
+            self.assertIn("无法安全解析".encode(), body)
+            self.assertEqual(config_path.read_text(encoding="utf-8"), original)
+        finally:
+            process.send_signal(signal.SIGINT)
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+
     def test_index_lists_briefs(self):
         status, _, body = _http_get(self.port, "/")
         self.assertEqual(status, 200)
@@ -819,6 +870,69 @@ class ServeSubcommandTest(unittest.TestCase):
         )
         self.assertEqual(status, 400)
         self.assertNotIn(secret.encode("utf-8"), body)
+
+    def test_coding_agent_failed_health_check_is_actionable(self):
+        status, _, body = _http_post(
+            self.port,
+            "/api/coding-agent/test",
+            json.dumps(
+                {
+                    "provider": "openai_compatible",
+                    "base_url": "http://127.0.0.1:1/v1",
+                    "api_key": "test-key",
+                    "model": "test-model",
+                }
+            ).encode("utf-8"),
+            "application/json",
+        )
+
+        self.assertEqual(status, 422)
+        payload = json.loads(body)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["error_kind"], "api_connection_failed")
+        self.assertIn("API key", payload["error_action"])
+
+    def test_brief_generation_routes_validate_repository_and_render_controls(self):
+        status, _, body = _http_get(self.port, "/ui/briefs")
+        self.assertEqual(status, 200)
+        self.assertIn(b"brief-generate-repository", body)
+        self.assertIn(b"brief-generate-button", body)
+        self.assertIn(b"acme/widgets", body)
+
+        status, _, body = _http_post(
+            self.port,
+            "/api/briefs/generate",
+            b'{"repository":"not-valid"}',
+            "application/json",
+        )
+        self.assertEqual(status, 400)
+
+        status, _, body = _http_post(
+            self.port,
+            "/api/briefs/generate",
+            b'{"repository":"other/project"}',
+            "application/json",
+        )
+        self.assertEqual(status, 403)
+        self.assertIn("请先添加".encode(), body)
+
+        status, _, body = _http_get(self.port, "/api/brief-jobs/missing")
+        self.assertEqual(status, 404)
+        self.assertIn(b"brief job not found", body)
+
+    def test_brief_generation_controls_include_legacy_watched_repositories(self):
+        watched_path = self.directory / ".ghe" / "watched_repositories.json"
+        watched_path.write_text(
+            json.dumps(["legacy/project"]),
+            encoding="utf-8",
+        )
+        try:
+            status, _, body = _http_get(self.port, "/ui/briefs")
+            self.assertEqual(status, 200)
+            self.assertIn(b"legacy/project", body)
+            self.assertNotIn(b"id='brief-generate-repository' disabled", body)
+        finally:
+            watched_path.unlink(missing_ok=True)
 
     def test_post_rejects_invalid_length_oversize_and_utf8(self):
         cases = [

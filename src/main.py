@@ -601,7 +601,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--serve",
         action="store_true",
-        help="Start the local read-only web service on $GHE_SERVE_PORT (default 8765).",
+        help=(
+            "Start the local desktop/web service on $GHE_SERVE_PORT "
+            "(default 8765). Brief generation and repair drafts require "
+            "explicit user actions."
+        ),
     )
     parser.add_argument(
         "--serve-host",
@@ -869,7 +873,7 @@ def _process_single_repo(
     github_token: str | None,
     llm_client: LLMClient,
     memory_path: str,
-) -> None:
+) -> Path:
     """Run the full analyze -> render -> persist flow for one repository.
 
     Split out of ``main`` so a failure in one repository does not abort
@@ -943,6 +947,7 @@ def _process_single_repo(
     output_file = write_report(report, repo_full_name, config)
     write_step_summary(report, config)
     print(f"Report generated: {output_file}")
+    return output_file
 
 
 def _reload_last_brief(
@@ -1329,22 +1334,38 @@ def _prompt(question: str, default: str = "") -> str:
 
 
 def _write_config_yaml(path: Path, config: "dict[str, Any]") -> None:
-    """Persist ``config`` back to ``path`` as YAML.
+    """Atomically persist ``config`` with private file permissions.
 
-    We import ``yaml`` lazily so the module-level import surface
-    stays small. Existing comments in the source file are *not*
-    preserved -- callers that want a round-trip safe editor should
-    use a dedicated YAML library; this helper is only used to write
-    the freshly-built config the walk-through just collected.
+    Coding-agent API keys can live in this file, so every writer must avoid a
+    partially-written YAML document and must never leave the file world
+    readable. Existing comments are not preserved; callers that require YAML
+    round-tripping need a dedicated editor.
     """
 
+    import tempfile
     import yaml
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        yaml.safe_dump(config, allow_unicode=True, sort_keys=False),
-        encoding="utf-8",
-    )
+    temporary = ""
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            dir=path.parent,
+            delete=False,
+        ) as handle:
+            temporary = handle.name
+            yaml.safe_dump(config, handle, allow_unicode=True, sort_keys=False)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, path)
+        temporary = ""
+    finally:
+        if temporary:
+            Path(temporary).unlink(missing_ok=True)
 
 
 def _read_config_yaml(path: Path) -> "dict[str, Any]":
@@ -1359,6 +1380,24 @@ def _read_config_yaml(path: Path) -> "dict[str, Any]":
     except (OSError, yaml.YAMLError):
         return {}
     return loaded if isinstance(loaded, dict) else {}
+
+
+def _read_config_yaml_strict(path: Path) -> "dict[str, Any]":
+    """Read a configuration without silently discarding malformed content."""
+
+    import yaml
+
+    if not path.exists():
+        return {}
+    try:
+        loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        raise ValueError(f"could not safely read configuration: {exc}") from exc
+    if loaded is None:
+        return {}
+    if not isinstance(loaded, dict):
+        raise ValueError("configuration must contain a YAML object")
+    return loaded
 
 
 def _valid_repo_name(value: str) -> bool:
@@ -1376,44 +1415,15 @@ def _valid_repo_name(value: str) -> bool:
 def _write_config_repositories(path: Path, values: list[str]) -> list[str]:
     """Atomically replace the canonical top-level ``repos`` list."""
 
-    import tempfile
-    import yaml
-
     canonical = list(
         dict.fromkeys(value for value in values if _valid_repo_name(value))
     )
-    if path.exists():
-        try:
-            loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
-        except (OSError, yaml.YAMLError) as exc:
-            raise ValueError(f"could not safely read repository config: {exc}") from exc
-        if not isinstance(loaded, dict):
-            raise ValueError("repository config must contain a YAML object")
-        raw_config = loaded
-    else:
-        raw_config = {}
-    raw_config["repos"] = canonical
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = ""
     try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            prefix=f".{path.name}.",
-            suffix=".tmp",
-            dir=path.parent,
-            delete=False,
-        ) as handle:
-            temporary = handle.name
-            yaml.safe_dump(raw_config, handle, allow_unicode=True, sort_keys=False)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.chmod(temporary, 0o600)
-        os.replace(temporary, path)
-        temporary = ""
-    finally:
-        if temporary:
-            Path(temporary).unlink(missing_ok=True)
+        raw_config = _read_config_yaml_strict(path)
+    except ValueError as exc:
+        raise ValueError(f"could not safely read repository config: {exc}") from exc
+    raw_config["repos"] = canonical
+    _write_config_yaml(path, raw_config)
     return canonical
 
 
@@ -1719,8 +1729,10 @@ def serve(args: argparse.Namespace) -> int:
       persisted record.
 
     GitHub reads are authenticated through the configured token or the
-    existing GitHub CLI login. Mutating actions remain local: Issue commands
-    prepare task drafts and decision memory, but never change GitHub directly.
+    existing GitHub CLI login. Brief generation, task preparation, and review
+    state remain local. A repair can create a GitHub Draft PR only after
+    verification, complete hunk review, and a short-lived confirmation token
+    generated by an explicit user action.
     The server binds to 127.0.0.1 by default so the LAN cannot reach it
     without the explicit ``--serve-host 0.0.0.0`` opt-in.
     """
@@ -1763,6 +1775,8 @@ def serve(args: argparse.Namespace) -> int:
     # particular job.
     _job_locks = tuple(threading.RLock() for _ in range(64))
     _config_lock = threading.RLock()
+    _brief_jobs_lock = threading.RLock()
+    _brief_jobs: dict[str, dict[str, object]] = {}
     _warned_about_watched_repositories = False
 
     def _job_lock(job_id: str) -> threading.RLock:
@@ -1814,6 +1828,11 @@ def serve(args: argparse.Namespace) -> int:
             for value in values
             if isinstance(value, str) and _valid_repo_name(value)
         ]
+
+    def _tracked_repositories() -> list[str]:
+        """Return canonical and legacy tracked repositories without duplicates."""
+
+        return list(dict.fromkeys([*repos, *_load_watched_repositories()]))
 
     def _save_configured_repositories(values: list[str]) -> None:
         """Persist UI-added repositories to the canonical config list.
@@ -2230,6 +2249,14 @@ def serve(args: argparse.Namespace) -> int:
             "provider": str(section["provider"]),
             "model": str(section.get("model") or ""),
         }
+        if not healthy:
+            response.update(
+                {
+                    "error": "Coding Agent 连接测试失败。",
+                    "error_kind": "api_connection_failed",
+                    "error_action": "检查 API key、base_url、model 或本地 CLI 登录状态后重试。",
+                }
+            )
         return (
             200 if healthy else 422,
             json.dumps(response, ensure_ascii=False).encode("utf-8"),
@@ -2248,37 +2275,34 @@ def serve(args: argparse.Namespace) -> int:
             )
         target = Path(args.config or ".ghe/config.yml")
         with _config_lock:
-            raw_config = _read_config_yaml(target)
-            raw_config["coding_agent"] = section
-            import tempfile
-            import yaml
-
-            target.parent.mkdir(parents=True, exist_ok=True)
-            temporary = ""
             try:
-                with tempfile.NamedTemporaryFile(
-                    mode="w",
-                    encoding="utf-8",
-                    prefix=f".{target.name}.",
-                    suffix=".tmp",
-                    dir=target.parent,
-                    delete=False,
-                ) as handle:
-                    temporary = handle.name
-                    yaml.safe_dump(
-                        raw_config,
-                        handle,
-                        allow_unicode=True,
-                        sort_keys=False,
-                    )
-                    handle.flush()
-                    os.fsync(handle.fileno())
-                os.chmod(temporary, 0o600)
-                os.replace(temporary, target)
-                temporary = ""
-            finally:
-                if temporary:
-                    Path(temporary).unlink(missing_ok=True)
+                raw_config = _read_config_yaml_strict(target)
+            except ValueError as exc:
+                return (
+                    409,
+                    json.dumps(
+                        {
+                            "error": (
+                                "现有配置文件无法安全解析，已拒绝覆盖。"
+                                f"请先修复 YAML：{str(exc)[:240]}"
+                            )
+                        },
+                        ensure_ascii=False,
+                    ).encode("utf-8"),
+                    "application/json",
+                )
+            raw_config["coding_agent"] = section
+            try:
+                _write_config_yaml(target, raw_config)
+            except OSError as exc:
+                return (
+                    500,
+                    json.dumps(
+                        {"error": f"无法安全保存 Coding Agent 配置：{str(exc)[:240]}"},
+                        ensure_ascii=False,
+                    ).encode("utf-8"),
+                    "application/json",
+                )
             config["coding_agent"] = dict(section)
             repair_capability_cache.update({"loaded_at": 0.0, "payload": None})
         response = {
@@ -3502,7 +3526,7 @@ footer {{ max-width: 960px; margin: 64px auto 32px; padding: 0 24px;
 <main>
 {body}
 </main>
-<footer>GitHub Engineer v1.0.0 &middot; read-only local UI &middot; bind 127.0.0.1:8765</footer>
+<footer>GitHub Engineer v1.0.0 &middot; local-first UI &middot; external writes require confirmation</footer>
 </body>
 </html>
 """
@@ -3729,15 +3753,145 @@ footer {{ max-width: 960px; margin: 64px auto 32px; padding: 0 24px;
         body = _render_brief_html_body(path)
         return 200, render_shell(title=f"简报 · {decoded}", body=body, repos=repos, active="briefs", context="维护简报").encode("utf-8"), "text/html; charset=utf-8"
 
+    def _run_brief_generation(job_id: str, repo_full_name: str) -> None:
+        """Generate one report off the request thread and retain safe status."""
+
+        def update(**values: object) -> None:
+            with _brief_jobs_lock:
+                job = _brief_jobs.get(job_id)
+                if job is not None:
+                    job.update(values)
+                    job["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+        update(status="running", message="正在读取 Issue 并生成维护简报…")
+        try:
+            analysis_config = config.get("analysis", {})
+            if not isinstance(analysis_config, dict):
+                raise ConfigError("analysis must be a mapping")
+            model_config = config.get("model")
+            if not isinstance(model_config, dict):
+                raise ConfigError("Missing model configuration")
+            brief_history_dir = history_dir
+            history_enabled = _safe_local_directory(brief_history_dir) and (
+                os.path.isdir(brief_history_dir) or _writable_dir(brief_history_dir)
+            )
+            output_file = _process_single_repo(
+                repo_full_name=repo_full_name,
+                config=config,
+                history_dir=brief_history_dir,
+                history_enabled=history_enabled,
+                lookback_days=int(analysis_config.get("lookback_days", 7)),
+                max_issues=int(analysis_config.get("max_issues_for_llm", 50)),
+                top_n=int(analysis_config.get("top_n", 3)),
+                min_issue_age_hours=int(analysis_config.get("min_issue_age_hours", 24)),
+                github_token=github_token,
+                llm_client=create_llm_client(model_config),
+                memory_path=args.memory_path,
+            )
+        except Exception as exc:  # keep a daemon worker failure visible in the UI
+            update(
+                status="failed",
+                message=format_error(exc)[:500],
+            )
+            return
+        update(
+            status="completed",
+            message="维护简报已生成。",
+            file_name=output_file.name,
+            url=f"/ui/briefs/{quote(output_file.name)}",
+        )
+
+    def start_brief_generation(
+        payload: dict[str, object]
+    ) -> tuple[int, bytes, str]:
+        repo_full_name = str(payload.get("repository") or "").strip()
+        if not _valid_repo_name(repo_full_name):
+            return (
+                400,
+                b'{"error":"repository must use owner/name"}',
+                "application/json",
+            )
+        tracked_repositories = _tracked_repositories()
+        if repo_full_name not in tracked_repositories:
+            return (
+                403,
+                json.dumps(
+                    {"error": "请先添加这个仓库，再生成简报。"},
+                    ensure_ascii=False,
+                ).encode("utf-8"),
+                "application/json",
+            )
+        with _brief_jobs_lock:
+            for existing in _brief_jobs.values():
+                if (
+                    existing.get("repository") == repo_full_name
+                    and existing.get("status") in {"queued", "running"}
+                ):
+                    return (
+                        202,
+                        json.dumps(existing, ensure_ascii=False).encode("utf-8"),
+                        "application/json",
+                    )
+            # Bound the in-memory status table. Completed files live on disk;
+            # old transient job records do not need to grow forever.
+            while len(_brief_jobs) >= 50:
+                removable = next(
+                    (
+                        key
+                        for key, value in _brief_jobs.items()
+                        if value.get("status") not in {"queued", "running"}
+                    ),
+                    None,
+                )
+                if removable is None:
+                    break
+                _brief_jobs.pop(removable, None)
+            import secrets as _secrets
+
+            job_id = _secrets.token_urlsafe(12)
+            now = datetime.now(timezone.utc).isoformat()
+            job: dict[str, object] = {
+                "id": job_id,
+                "repository": repo_full_name,
+                "status": "queued",
+                "message": "维护简报已加入队列。",
+                "created_at": now,
+                "updated_at": now,
+            }
+            _brief_jobs[job_id] = job
+        threading.Thread(
+            target=_run_brief_generation,
+            args=(job_id, repo_full_name),
+            daemon=True,
+            name=f"ghe-brief-{job_id}",
+        ).start()
+        return (
+            202,
+            json.dumps(job, ensure_ascii=False).encode("utf-8"),
+            "application/json",
+        )
+
+    def render_brief_generation_job(job_id: str) -> tuple[int, bytes, str]:
+        with _brief_jobs_lock:
+            job = _brief_jobs.get(job_id)
+            payload = dict(job) if job is not None else None
+        if payload is None:
+            return 404, b'{"error":"brief job not found"}', "application/json"
+        return (
+            200,
+            json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            "application/json",
+        )
+
     def render_briefs_index_html() -> tuple[int, bytes, str]:
         import html
 
         if not output_dir.exists():
-            cards = "<div class='empty-state'>简报目录不存在。</div>"
+            cards = "<div class='empty-state'>还没有简报。选择仓库后即可生成第一份。</div>"
         else:
             briefs = sorted(output_dir.glob("*_*.md"), reverse=True)
             if not briefs:
-                cards = "<div class='empty-state'>还没有简报。回到对话，我会告诉你如何生成第一份。</div>"
+                cards = "<div class='empty-state'>还没有简报。选择仓库后即可生成第一份。</div>"
             else:
                 cards = "".join(
                     "<a class='brief-card' href='/ui/briefs/{href}'>"
@@ -3756,12 +3910,28 @@ footer {{ max-width: 960px; margin: 64px auto 32px; padding: 0 24px;
                     for path in briefs
                     if path.is_file()
                 )
+        tracked_repositories = _tracked_repositories()
+        repo_options = "".join(
+            f"<option value='{html.escape(repo, quote=True)}'>{html.escape(repo)}</option>"
+            for repo in tracked_repositories
+        )
+        generation_controls = (
+            "<div class='brief-generation-controls'>"
+            "<label for='brief-generate-repository'>仓库</label>"
+            f"<select id='brief-generate-repository' {'disabled' if not tracked_repositories else ''}>"
+            f"{repo_options or '<option>请先添加仓库</option>'}</select>"
+            f"<button class='primary-button' id='brief-generate-button' type='button' "
+            f"{'disabled' if not tracked_repositories else ''}>生成新简报</button>"
+            "<span id='brief-generate-status' role='status' aria-live='polite'></span>"
+            "</div>"
+        )
         body = (
             "<section class='content-page'><div class='page-heading'><div class='eyebrow'>历史记录</div>"
-            "<h2>维护简报</h2><p>每一次分析都保留为可追溯的快照，最新结果排在最前面。</p></div>"
+            "<h2>维护简报</h2><p>每一次分析都保留为可追溯的快照，最新结果排在最前面。</p>"
+            f"{generation_controls}</div>"
             f"<div class='card-list'>{cards}</div></section>"
         )
-        return 200, render_shell(title="维护简报", body=body, repos=repos, active="briefs", context="维护简报").encode("utf-8"), "text/html; charset=utf-8"
+        return 200, render_shell(title="维护简报", body=body, repos=tracked_repositories, active="briefs", context="维护简报").encode("utf-8"), "text/html; charset=utf-8"
 
     def render_decisions_html() -> tuple[int, bytes, str]:
         import html
@@ -4022,6 +4192,9 @@ footer {{ max-width: 960px; margin: 64px auto 32px; padding: 0 24px;
                 status, body, content_type = render_connection_status()
             elif path == "/api/briefs/trend" or path.startswith("/api/briefs/trend?"):
                 status, body, content_type = render_trend_summary(parse_qs(parsed.query))
+            elif path.startswith("/api/brief-jobs/"):
+                job_id = unquote(path.removeprefix("/api/brief-jobs/")).strip("/")
+                status, body, content_type = render_brief_generation_job(job_id)
             elif path == "/api/repairs":
                 status, body, content_type = render_repair_jobs()
             elif path.startswith("/api/repairs/") and path.endswith("/confirm-token"):
@@ -4149,6 +4322,7 @@ footer {{ max-width: 960px; margin: 64px auto 32px; padding: 0 24px;
                 "/api/connections/start",
                 "/api/coding-agent/test",
                 "/api/coding-agent/configure",
+                "/api/briefs/generate",
                 "/api/tracked-repositories",
                 "/api/watched-repositories",
             } and not repair_action:
@@ -4196,6 +4370,8 @@ footer {{ max-width: 960px; margin: 64px auto 32px; padding: 0 24px;
                 status, body, content_type = test_coding_agent(payload)
             elif path == "/api/coding-agent/configure":
                 status, body, content_type = configure_coding_agent_api(payload)
+            elif path == "/api/briefs/generate":
+                status, body, content_type = start_brief_generation(payload)
             elif path in {"/api/tracked-repositories", "/api/watched-repositories"}:
                 status, body, content_type = add_watched_repository(payload)
             elif repair_action:
@@ -4256,6 +4432,8 @@ footer {{ max-width: 960px; margin: 64px auto 32px; padding: 0 24px;
     print(f"  GET  /                  index of briefs", flush=True)
     print(f"  GET  /briefs            same as /", flush=True)
     print(f"  GET  /brief/<repo>      latest brief as Markdown", flush=True)
+    print(f"  POST /api/briefs/generate start a local brief generation job", flush=True)
+    print(f"  GET  /api/brief-jobs/<id> brief generation status", flush=True)
     print(f"  GET  /decisions         decision memory as JSON", flush=True)
     print(f"  GET  /decisions.txt     decision memory as plain text", flush=True)
     print(f"  GET  /api/repositories  tracked GitHub repositories", flush=True)

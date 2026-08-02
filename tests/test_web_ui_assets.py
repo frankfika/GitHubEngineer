@@ -9,7 +9,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from src.web_ui import APP_CSS, APP_JS, DIFF_VIEW_CLIENT_JS
+from src.web_ui import APP_CSS, APP_JS, DIFF_VIEW_CLIENT_JS, render_shell
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -136,3 +136,24 @@ def test_diff_review_has_an_offline_fallback_without_losing_hunk_controls() -> N
     assert "${escapeHtml(doc)}" in source
     assert "renderDiffSidebar();\n      const mounted = await mountDiffEditor" in source
     assert "if (!mounted || !isCurrentRequest()) return;" in source
+
+
+def test_coding_agent_indicator_is_keyboard_accessible_and_reuses_saved_key() -> None:
+    source = APP_JS
+
+    assert '<button class="coding-agent-indicator"' in render_shell(
+        title="test", body="", repos=[]
+    )
+    assert "currentCodingAgent.provider ===" in source
+    assert "currentCodingAgent.last_error_kind !== 'api_key_invalid'" in source
+    assert "error.error_kind === 'api_connection_failed'" in source
+
+
+def test_brief_generation_has_visible_progress_and_completion_navigation() -> None:
+    source = APP_JS
+
+    assert "const startBriefGeneration = async () =>" in source
+    assert "fetchJson('/api/briefs/generate'" in source
+    assert "`/api/brief-jobs/${encodeURIComponent(jobId)}`" in source
+    assert "window.location.assign(job.url)" in source
+    assert "briefGenerateButton.addEventListener('click', startBriefGeneration)" in source
