@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "GitHub Engineer",
   "version": "1.0.0",
-  "identifier": "com.opencsg.github-engineer",
+  "identifier": "com.frankfika.github-engineer",
   "build": {
     "beforeDevCommand": ".venv/bin/python scripts/build_desktop_sidecar.py && .venv/bin/python -m src.main --config .ghe/config.yml --serve --serve-host 127.0.0.1",
     "beforeBuildCommand": ".venv/bin/python scripts/build_desktop_sidecar.py",

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-08-05
+
+> **Note.** The v1.0.0 git tag was first cut at `f948c6f` (audit-round-5,
+> 2026-07-22) but was never published to PyPI. This entry re-cuts v1.0.0
+> on the current `main` (HEAD `d4ca9ab`) so the published artefact
+> matches the code in this repository. PyPI's `/simple/github-engineer/`
+> 404s as of this commit, so no installed copy of the old tag exists.
+
 ### Added
 
 - **Production desktop release path.** A pinned GitHub Actions workflow now
@@ -111,6 +119,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - 382 pytest tests cover the CLI, GitHub/LLM clients, web APIs, desktop
   assets, repair lifecycle, security gates, persistence, and failure recovery.
+
+### Fixed (drift cleanup)
+
+- `.github/ISSUE_TEMPLATE/config.yml` contact links now point at
+  `frankfika/GitHubEngineer` instead of the original `OpenCSG/github-engineer`
+  placeholder org.
+- `src-tauri/tauri.conf.json` bundle identifier renamed to
+  `com.frankfika.github-engineer` so macOS codesign, notarization, and
+  auto-update metadata match the repository owner.
+- `SECURITY.md` now directs vulnerability reports to GitHub Private
+  Vulnerability Reporting on this repository; `CODE_OF_CONDUCT.md`
+  uses GitHub Discussions for the `conduct` category. Both files no
+  longer expose the previous `*@opencsg.com` mailboxes.
+- `VERIFY.md` PyPI Trusted Publisher and origin URL examples now use
+  `frankfika/GitHubEngineer`.
 
 ## [0.1.0] - 2026-07-21
 

@@ -51,8 +51,11 @@ the community in public spaces.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behaviour may
-be reported to the maintainers at `conduct@opencsg.com`. All complaints
-will be reviewed and investigated promptly and fairly.
+be reported to the maintainers through a **GitHub Discussion** tagged
+`conduct` (https://github.com/frankfika/GitHubEngineer/discussions/new?category=conduct)
+or, for sensitive reports, via the project's private security advisory
+channel linked in `SECURITY.md`. All complaints will be reviewed and
+investigated promptly and fairly.
 
 ## Attribution
 

@@ -176,13 +176,13 @@ All release preconditions met. Push to GitHub to trigger publish.yml.
 To actually publish:
 
 1. Create a remote and push the tag: `git remote add origin
-   git@github.com:OpenCSG/github-engineer.git && git push -u origin main
+   git@github.com/frankfika/GitHubEngineer.git && git push -u origin main
    --tags`.
 2. The `publish.yml` workflow fires on `v*.*.*` tag, builds the
    artefacts, and uses `pypa/gh-action-pypi-publish@release/v1` with
    the OIDC `id-token` permission. Configure the PyPI **Trusted
    Publisher** at https://pypi.org/manage/account/publishing/ pointing
-   at `OpenCSG/github-engineer` / environment `pypi` / workflow
+   at `frankfika/GitHubEngineer` / environment `pypi` / workflow
    `publish.yml` before the first push.
 
 ## 9. Known limitations

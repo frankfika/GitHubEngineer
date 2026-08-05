@@ -22,6 +22,14 @@ src-tauri/binaries/
 .ghe/repair-workspaces/
 .ghe/watched_repositories.json
 .ghe/memory/decisions.yml
+.ghe/decisions.json
 .ghe/history/
 # Never commit live tokens, even in test fixtures.
 .ghe/secrets.env
+# ghe --pipeline output (one Markdown task per issue, kept locally)
+tasks/
+# UX improvement scratchpads written by /init and sub-agents; not part of the repo.
+docs/UX_*.md
+docs/FINAL_DELIVERY.md
+# Ad-hoc output folder (WeChat drafts, export bundles) not tracked here.
+output/

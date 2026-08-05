@@ -12,13 +12,15 @@
 
 **Please do not open a public issue for security problems.**
 
-Email `security@opencsg.com` with the subject line `ghe-security` and
-include:
+Preferred channel: **GitHub Private Vulnerability Reporting** —
+https://github.com/frankfika/GitHubEngineer/security/advisories/new
 
-- A short description of the vulnerability and the impact.
-- A reproduction recipe (commands, sample config, issue payload) with any
-  secrets redacted.
-- The affected version, commit SHA, and (if known) a suggested fix.
+The advisory form accepts a title, severity, affected version, and a
+Markdown description. The report goes directly to the maintainers and
+stays private until we publish a fix.
+
+If you cannot use the advisory form, open a draft GitHub Discussion
+tagged `security` and a maintainer will follow up privately.
 
 We will acknowledge within **3 business days** and aim to ship a fix or a
 mitigation within **30 days** of confirmation. We follow coordinated
