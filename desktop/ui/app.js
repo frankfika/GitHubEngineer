@@ -108,11 +108,13 @@
   const briefGenerateButton = qs('#brief-generate-button');
   const briefGenerateStatus = qs('#brief-generate-status');
   const diffView = qs('#diff-view');
+  const diffViewOverview = qs('.diff-view-overview');
   const diffViewEditor = qs('#diff-view-editor');
   const diffViewSidebar = qs('#diff-view-sidebar-list');
   const diffViewStatus = qs('#diff-view-status');
   const diffViewStats = qs('#diff-view-stats');
   const diffViewTitle = qs('#diff-view-title');
+  const diffViewSummary = qs('#diff-view-summary');
   const diffViewVerification = qs('#diff-view-verification');
   const diffViewUpgrade = qs('#diff-view-upgrade');
   const diffAcceptAll = qs('#diff-accept-all');
@@ -131,12 +133,14 @@
   const repairDialog = qs('#repair-inspector');
   const repairTaskList = qs('#repair-task-list');
   const repairTaskCount = qs('#repair-task-count');
+  const repairTaskToggle = qs('#repair-task-toggle');
   const repairRepository = qs('#repair-repository');
   const repairTitle = qs('#repair-title');
   const repairDelivery = qs('#repair-delivery');
   const repairStream = qs('#repair-stream');
   const repairGuidanceInput = qs('#repair-guidance-input');
   const repairGuidanceSend = qs('#repair-guidance-send');
+  const repairSkipSubmit = qs('#repair-skip-submit');
   const repairPublish = qs('#repair-publish');
   const defaultOnboardingMarkup = repositoryOnboarding?.innerHTML || '';
   let pendingDecision = null;
@@ -165,6 +169,7 @@
   let connectionPollTimer = null;
   let briefGenerationTimer = null;
   let repairJobs = [];
+  let showRepairHistory = false;
   let publishGeneration = 0;
   let repairSessionGeneration = 0;
 
@@ -220,12 +225,42 @@
     return { status, detail, reason };
   };
 
+  const missingVerificationTools = (job = null) => {
+    const raw = job?.verification;
+    const commands = raw && typeof raw === 'object' && Array.isArray(raw.commands)
+      ? raw.commands
+      : [];
+    return commands.flatMap((command) => {
+      const stderr = String(command?.stderr_summary || '');
+      if (command?.exit_code !== null || !/No such file or directory/i.test(stderr)) return [];
+      const executable = String(command?.argv?.[0] || command?.display || '').trim().split(/\s+/)[0];
+      return executable ? [executable] : [];
+    }).filter((value, index, values) => values.indexOf(value) === index);
+  };
+
+  const verificationToolLabel = (tool) => ({
+    go: 'Go',
+    node: 'Node.js',
+    npm: 'npm',
+    pnpm: 'pnpm',
+    yarn: 'Yarn',
+    python: 'Python',
+  }[tool] || tool);
+
   const renderVerification = (job) => {
     const verification = repairVerification(job);
+    const missingTools = missingVerificationTools(job);
+    if (missingTools.length) {
+      const names = missingTools.map(verificationToolLabel).join('、');
+      return `<div class="repair-verification" data-status="unverified"><strong>验证环境不完整</strong><span>本机缺少 ${escapeHtml(names)}，代码改动仍可 Review；完成验证前暂不能提交。</span></div>`;
+    }
+    if (verification.status === 'unverified' && verification.reason === 'dependency_missing') {
+      return `<div class="repair-verification" data-status="unverified"><strong>验证环境不完整</strong><span>${escapeHtml(verification.detail || '项目依赖没有安装完整；代码改动仍可 Review，完成验证前暂不能提交。')}</span></div>`;
+    }
     const labels = {
       passed: ['验证通过', '已收到明确的测试/验证通过结果。'],
-      failed: ['验证失败', '测试或验证没有通过，不能创建 Draft PR。'],
-      unverified: ['未验证', '没有明确的测试结果；这不代表修复已经完成，不能创建 Draft PR。'],
+      failed: ['验证失败', '测试或验证没有通过，暂时不能提交修复。'],
+      unverified: ['等待验证', '还没有明确的测试结果，暂时不能提交修复。'],
     };
     const [title, fallback] = labels[verification.status];
     return `<div class="repair-verification" data-status="${verification.status}"><strong>${title}</strong><span>${escapeHtml(verification.detail || fallback)}</span></div>`;
@@ -244,10 +279,13 @@
     ].filter(Boolean).join('\n')).filter(Boolean).join('\n\n');
     let recovery = '';
     if (verification.status === 'failed') {
+      const missingTools = missingVerificationTools(job);
       const modules = Array.from(output.matchAll(/No module named ['"]([^'"]+)['"]/g))
         .map((match) => match[1])
         .filter((value, index, values) => values.indexOf(value) === index);
-      const dependencyHint = modules.length
+      const dependencyHint = missingTools.length
+        ? `本机没有安装 ${missingTools.map(verificationToolLabel).join('、')}，所以测试没有真正启动；这不表示代码本身失败。你仍可在下方 Review 全部改动。`
+        : modules.length
         ? `测试环境缺少依赖：${modules.join('、')}。请先在可信的项目环境中安装依赖，然后重新验证。`
         : '查看失败摘要，修复测试环境或代码后重新验证。';
       const log = output
@@ -256,6 +294,17 @@
       recovery = `<div class="verification-recovery">${escapeHtml(dependencyHint)}<div class="suggestions"><button class="suggestion primary-suggestion" type="button" data-retry-verification>重新运行验证</button></div>${log}</div>`;
     } else if (verification.status === 'unverified' && verification.reason === 'sandbox_unavailable') {
       recovery = '<div class="verification-recovery">尚未运行测试。继续前会再次确认执行不可信仓库代码的风险。<div class="suggestions"><button class="suggestion primary-suggestion" type="button" data-allow-host-verification>我理解风险，在本机运行测试</button></div></div>';
+    } else if (verification.status === 'unverified' && ['no_tests_detected', 'dependency_missing'].includes(verification.reason)) {
+      const modules = Array.from(output.matchAll(/No module named ['"]([^'"]+)['"]/g))
+        .map((match) => match[1])
+        .filter((value, index, values) => values.indexOf(value) === index);
+      const hint = verification.reason === 'dependency_missing'
+        ? `缺少项目依赖${modules.length ? `：${modules.join('、')}` : ''}。补齐可信项目环境后可以重新验证。`
+        : '当前没有识别到测试命令。更新测试配置或检测规则后可以重新检测。';
+      const log = output
+        ? `<details class="verification-log"><summary>查看验证摘要</summary><pre>${escapeHtml(output.slice(-6000))}</pre></details>`
+        : '';
+      recovery = `<div class="verification-recovery">${escapeHtml(hint)}<div class="suggestions"><button class="suggestion primary-suggestion" type="button" data-retry-verification>重新检测并验证</button></div>${log}</div>`;
     }
     return `${renderVerification(job)}${recovery}`;
   };
@@ -263,7 +312,7 @@
   const providerDataBoundary = (job = null) => {
     const provider = normalizedProviderName(job);
     if (isDemoRepair(job)) {
-      return 'fake 只生成演示数据，不会真正理解或修复仓库；演示任务禁止创建 Draft PR。';
+      return 'fake 只生成演示数据，不会真正理解或修复仓库；演示任务不能提交。';
     }
     if (provider === 'codex_cli' || provider === 'claude_cli' || provider.includes('local') || provider.includes('ollama')) {
       return '当前 Provider 在本机处理仓库内容；是否产生外部请求取决于该本地工具自身的配置。';
@@ -491,19 +540,19 @@
       let repairLabel;
       let repairSubLabel = '';
       if (repairCapabilities === null) {
-        repairLabel = '检查修复环境…';
+        repairLabel = '开始修复';
       } else if (currentCanModify && currentGithubAuthenticated) {
-        repairLabel = '在隔离目录开始修复';
-        repairSubLabel = '完成后可一键提 PR';
+        repairLabel = '开始修复';
+        repairSubLabel = '完成后可提 PR';
       } else if (currentCanModify && !currentGithubAuthenticated) {
-        repairLabel = '在隔离目录开始修复';
-        repairSubLabel = '产物留本地 · 连接后可提 PR';
+        repairLabel = '开始修复';
+        repairSubLabel = '先生成本地草稿';
       } else if (!currentCanModify && currentGithubAuthenticated) {
-        repairLabel = '在你的 Fork 开始修复';
+        repairLabel = '开始修复';
         repairSubLabel = '完成后可提 PR';
       } else {
-        repairLabel = '在隔离目录开始修复';
-        repairSubLabel = '产物留本地';
+        repairLabel = '开始修复';
+        repairSubLabel = '先生成本地草稿';
       }
       // 4 档 action 字段: 拆开 gh / coding_agent 状态, 而不是只看 repairReady.
       //   - fully ready (gh + coding_agent): data-issue-command → 直接进修复
@@ -532,20 +581,20 @@
         // 没配 coding agent — 弹配置 dialog
         repairAction = 'data-open-coding-agent-setup';
         repairTitle = ' title="先配置 Coding Agent"';
-        repairSubLabel = '点配置 Coding Agent，选择 provider + 填 key';
+        repairSubLabel = '需要先完成修复设置';
       } else if (!caHealthy || apiKeyError) {
         repairAction = 'data-open-coding-agent-setup';
         repairTitle = ' title="Coding Agent 连接失败，请检查配置"';
-        repairSubLabel = `${caLabel} 无法连接 · 检查 API key、base_url 和 model`;
+        repairSubLabel = '检查修复设置';
       } else if (!ghAuth) {
         // coding agent 已配, 但没连 gh — 弹 gh 连接
         repairAction = 'data-open-github-setup';
         repairTitle = ' title="先连接 GitHub"';
-        repairSubLabel = `${caLabel} 已就绪 · 连接 GitHub 后可提 PR`;
+        repairSubLabel = '完成后连接 GitHub 才能提 PR';
       } else {
         repairAction = 'data-open-coding-agent-setup';
         repairTitle = ' title="自动修复环境尚未就绪"';
-        repairSubLabel = '自动修复环境尚未就绪，点这里检查';
+        repairSubLabel = '需要先完成修复设置';
       }
       const sub = repairSubLabel
         ? `<span class="issue-command-sub">${escapeHtml(repairSubLabel)}</span>`
@@ -1163,18 +1212,22 @@
     return result;
   };
 
+  // Keep this in lock-step with repairProgressLabels so the sidebar
+  // task list and the in-session progress timeline speak the same
+  // user-facing language. "Draft PR" / "草稿" / "自动修复" were
+  // intentionally removed — see renderRepairProgress for context.
   const repairStatusLabels = {
-    queued: '修复任务已排队',
-    cloning: '正在读取代码',
-    analyzing: '正在定位问题',
-    locating: '正在定位问题',
-    coding: '正在修改代码',
-    verifying: '正在运行验证',
-    review_ready: '等待你的审核',
-    publish_queued: '已确认创建 PR',
-    publishing: '正在提交修复草稿',
+    queued: '进入修复队列',
+    cloning: '准备隔离工作区',
+    analyzing: '读取 Issue 与代码',
+    locating: '定位需要修改的位置',
+    coding: 'AI 修改代码',
+    verifying: '运行测试与验证',
+    review_ready: '整理完整改动',
+    publish_queued: '准备提交修复',
+    publishing: '正在提交修复',
     completed: '修复已提交',
-    failed: '自动修复未完成',
+    failed: '修复已停止',
   };
 
   const repairStorageKey = (repository, issueNumber) => `ghe:repair:${repository}#${issueNumber}`;
@@ -1189,15 +1242,28 @@
   const renderRepairTaskList = (jobs = []) => {
     repairJobs = jobs;
     if (!repairTaskList) return;
+    const historyStatuses = ['completed', 'failed'];
+    const activeJobs = jobs.filter((job) => !historyStatuses.includes(job.status));
+    const historyJobs = jobs.filter((job) => historyStatuses.includes(job.status));
     if (repairTaskCount) {
-      repairTaskCount.textContent = String(jobs.length);
-      repairTaskCount.title = `${jobs.length} 个任务，其中 ${jobs.filter((job) => !['completed', 'failed'].includes(job.status)).length} 个进行中`;
+      repairTaskCount.textContent = String(activeJobs.length || jobs.length);
+      repairTaskCount.title = `${activeJobs.length} 个进行中${historyJobs.length ? `，${historyJobs.length} 个历史任务` : ''}`;
+    }
+    if (repairTaskToggle) {
+      repairTaskToggle.hidden = !historyJobs.length;
+      repairTaskToggle.textContent = showRepairHistory ? '收起历史' : `查看历史 (${historyJobs.length})`;
+      repairTaskToggle.setAttribute('aria-expanded', String(showRepairHistory));
     }
     if (!jobs.length) {
       repairTaskList.innerHTML = '<div class="task-empty">还没有修复任务。<br>从 Issue 开始一个。</div>';
       return;
     }
-    repairTaskList.innerHTML = jobs.slice(0, 30).map((job) => {
+    const visibleJobs = (showRepairHistory ? jobs : activeJobs).slice(0, 30);
+    if (!visibleJobs.length) {
+      repairTaskList.innerHTML = '<div class="task-empty">暂无进行中的任务。<br>历史任务已收起。</div>';
+      return;
+    }
+    repairTaskList.innerHTML = visibleJobs.map((job) => {
       const selected = currentRepairJob?.id === job.id ? ' active' : '';
       const title = job.issue_title || `Issue #${job.issue_number}`;
       const status = repairStatusLabels[job.status] || job.status || '未知状态';
@@ -1222,12 +1288,14 @@
   const showRepairInspector = () => {
     if (!repairDialog) return;
     repairDialog.hidden = false;
+    document.querySelector('.app-shell')?.classList.add('repair-open');
     if (scroller) scroller.hidden = true;
   };
 
   const closeRepairInspector = () => {
     if (!repairDialog) return;
     repairDialog.hidden = true;
+    document.querySelector('.app-shell')?.classList.remove('repair-open');
     if (scroller) scroller.hidden = false;
     window.clearTimeout(repairPollTimer);
   };
@@ -1367,6 +1435,52 @@
       </div>
     </section>`;
 
+  const repairProgressLabels = {
+    queued: '进入修复队列',
+    cloning: '准备隔离工作区',
+    analyzing: '读取 Issue 与代码',
+    locating: '定位需要修改的位置',
+    coding: 'AI 修改代码',
+    verifying: '运行测试与验证',
+    review_ready: '整理完整改动',
+    publish_queued: '准备提交修复',
+    publishing: '正在提交修复',
+    completed: '修复已提交',
+    failed: '修复已停止',
+  };
+
+  const fallbackRepairProgress = (job) => {
+    const flow = ['queued', 'cloning', 'analyzing', 'coding', 'verifying', 'review_ready'];
+    const aliases = { locating: 'analyzing', publish_queued: 'review_ready', publishing: 'review_ready', completed: 'review_ready' };
+    const normalized = aliases[job?.status] || job?.status || 'queued';
+    const currentIndex = Math.max(0, flow.indexOf(normalized));
+    return flow.slice(0, currentIndex + 1).map((status, index) => ({
+      status,
+      message: index === currentIndex ? String(job?.message || '') : '',
+      created_at: index === currentIndex ? job?.updated_at : '',
+    }));
+  };
+
+  const renderRepairProgress = (job) => {
+    const history = Array.isArray(job?.progress_history)
+      ? job.progress_history.filter((item) => item && typeof item === 'object')
+      : [];
+    const entries = (history.length ? history : fallbackRepairProgress(job)).slice(-8);
+    if (!entries.length) return '';
+    const active = !['review_ready', 'completed', 'failed'].includes(job?.status);
+    const rows = entries.map((entry, index) => {
+      const status = String(entry.status || 'queued');
+      const isLast = index === entries.length - 1;
+      const state = status === 'failed' ? 'failed' : (isLast && active ? 'current' : 'done');
+      const date = entry.created_at ? new Date(entry.created_at) : null;
+      const time = date && !Number.isNaN(date.getTime())
+        ? date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+        : '';
+      return `<div class="repair-progress-item ${state}"><span class="repair-progress-dot"></span><span class="repair-progress-copy"><strong>${escapeHtml(repairProgressLabels[status] || repairStatusLabels[status] || status)}</strong>${entry.message ? `<span>${escapeHtml(entry.message)}</span>` : ''}</span>${time ? `<time class="repair-progress-time">${escapeHtml(time)}</time>` : ''}</div>`;
+    }).join('');
+    return `<div class="repair-live-progress" aria-label="实时修复过程"><div class="repair-live-progress-heading"><strong>修复过程</strong><span>${active ? '每 3 秒自动更新' : '过程记录'}</span></div><div class="repair-progress-list">${rows}</div></div>`;
+  };
+
   const renderRepairSession = (job = null) => {
     if (!repairDialog || !repairStream || !currentRepairIssue) return;
     const previousJobId = String(currentRepairJob?.id || '');
@@ -1378,9 +1492,7 @@
       window.clearTimeout(repairPollTimer);
       repairPublish?.removeAttribute('aria-busy');
     }
-    const destination = currentRepairMode === 'owner_pr'
-      ? '修改将先保存为草稿，确认后再提交'
-      : '先在你的副本中准备修改，确认后再提交给原仓库';
+    const destination = '先查看完整改动，满意后再决定是否提交';
     repairRepository.textContent = `${currentRepairRepository || currentRepository} · #${currentRepairIssue.number}`;
     repairTitle.textContent = currentRepairIssue.title;
     repairDelivery.textContent = destination;
@@ -1398,10 +1510,11 @@
       repairStream.innerHTML = repairEvent(
         'assistant',
         '修复计划',
-        `<strong>${currentCanModify ? '准备修复' : '准备贡献修复'}</strong><br>流程：读取代码 → 定位问题 → 修改代码 → 运行验证 → 等待审核。只有明确验证通过并完成代码审核后才能提交。<div class="repair-safety-note"><strong>数据边界</strong>${escapeHtml(providerDataBoundary())}</div>${demoNotice}<div class="suggestions"><button class="suggestion primary-suggestion" type="button" data-start-repair>分析并准备修复</button><a class="suggestion" href="${escapeHtml(currentRepairIssue.url)}" target="_blank" rel="noreferrer">打开 Issue</a></div>`,
+        `<strong>${currentCanModify ? '准备修复' : '准备贡献修复'}</strong><br>AI 会读取代码、完成修改并运行验证。完成后你只需要查看改动，再决定是否提交。<div class="repair-safety-note"><strong>数据边界</strong>${escapeHtml(providerDataBoundary())}</div>${demoNotice}<div class="suggestions"><button class="suggestion primary-suggestion" type="button" data-start-repair>开始修复</button><a class="suggestion" href="${escapeHtml(currentRepairIssue.url)}" target="_blank" rel="noreferrer">查看 Issue</a></div>`,
       );
       repairGuidanceInput.disabled = true;
       repairGuidanceSend.disabled = true;
+      if (repairSkipSubmit) repairSkipSubmit.hidden = true;
       repairPublish.disabled = true;
       return;
     }
@@ -1433,7 +1546,7 @@
       repairEvent(
         'assistant',
         repairStatusLabels[job.status] || '修复会话',
-        `<strong>${escapeHtml(repairStatusLabels[job.status] || job.status)}</strong><br>${escapeHtml(displayMessage)}${failureHelp}${renderVerification(job)}${hostVerificationCta}${isDemoRepair(job) ? '<div class="repair-safety-note"><strong>演示任务不可发布</strong>fake/demo Provider 的变更仅供体验界面，不会解锁 Draft PR。</div>' : ''}`,
+        `<strong>${escapeHtml(repairStatusLabels[job.status] || job.status)}</strong><br>${escapeHtml(displayMessage)}${renderRepairProgress(job)}${failureHelp}${renderVerification(job)}${hostVerificationCta}${isDemoRepair(job) ? '<div class="repair-safety-note"><strong>演示任务不可提交</strong>演示内容仅供体验界面，不会提交到 GitHub。</div>' : ''}`,
         '',
         job.status === 'failed' ? 'error' : '',
       ),
@@ -1453,26 +1566,26 @@
       events.push(repairEvent(
         'assistant',
         '修复草稿',
-        `<strong>已经提交，等待人工审核</strong><div class="suggestions"><a class="suggestion primary-suggestion" href="${escapeHtml(job.pr_url)}" target="_blank" rel="noreferrer">查看修复草稿</a></div>`,
+        `<strong>修复已经提交</strong><br>是否合并由原仓库管理员决定。<div class="suggestions"><a class="suggestion primary-suggestion" href="${escapeHtml(job.pr_url)}" target="_blank" rel="noreferrer">查看提交结果</a></div>`,
       ));
     }
     repairStream.innerHTML = events.join('');
     renderRepairTaskList(repairJobs);
-    const canGuide = job.status === 'review_ready';
-    repairGuidanceInput.disabled = !canGuide;
-    repairGuidanceSend.disabled = !canGuide;
-    // 发布还需要完成 diff 审核；loadAndRenderDiff 会在全部 hunk 已处理且
-    // 至少接受一处修改后才真正启用按钮。
+    const canRevise = job.status === 'review_ready';
+    repairGuidanceInput.disabled = !canRevise;
+    repairGuidanceSend.disabled = !canRevise;
+    if (repairSkipSubmit) repairSkipSubmit.hidden = !canRevise;
+    // diff 加载完成后，用户只需决定是否提交整份修复。
     repairPublish.disabled = true;
     const demo = isDemoRepair(job);
     repairPublish.textContent = demo
-      ? '演示任务不可发布'
+      ? '演示任务不可提交'
       : (verification.status !== 'passed'
-        ? (verification.status === 'failed' ? '验证失败，不能发布' : '未验证，不能发布')
-        : (canGuide ? '请先审核全部修改' : '确认并创建 Draft PR'));
+        ? (verification.status === 'failed' ? '修复未通过验证' : '等待验证')
+        : (canRevise ? '正在加载改动…' : '提交修复'));
     repairPublish.title = demo
-      ? 'fake/demo Provider 仅用于演示，禁止创建 Draft PR'
-      : (verification.status !== 'passed' ? '需要明确的测试或验证通过结果' : (canGuide ? '需要接受或拒绝每一处修改' : ''));
+      ? '演示内容不会提交到 GitHub'
+      : (verification.status !== 'passed' ? '需要明确的测试或验证通过结果' : '');
     repairStream.scrollTop = repairStream.scrollHeight;
     // 跑完默认弹 diff 视图 (status === review_ready).
     // 失败状态不弹 — 走结构化失败 UI, 不把用户引到空 diff 上去.
@@ -1516,8 +1629,8 @@
   // ===========================================================================
   // Diff view (CodeMirror 6 unified-diff renderer)
   //
-  // 当 job.status === review_ready 时, 跑完自动弹 diff 视图, 让用户逐 hunk
-  // 接受 / 拒绝 / 继续对话. 这部分照搬 dist/prototypes/diff-codemirror 的
+  // 当 job.status === review_ready 时，自动展示完整 diff，供用户检查后整份提交。
+  // 底层仍保留分段数据，用于提交前的完整性确认。代码视图沿用以下
   // 五条避坑经验:
   //
   //   1. importmap 显式 pin 所有 transitive deps (state / view / lezer / crelt /
@@ -1604,15 +1717,11 @@
 
   const updateDiffCtaStatus = () => {
     const activeJobId = String(currentRepairJob?.id || '');
-    const decisionWrites = activeJobId === _diffJobId ? pendingDecisionWrites(activeJobId) : 0;
     const total = Object.keys(_diffHunkStatuses).length;
-    const accepted = Object.values(_diffHunkStatuses).filter((s) => s === 'accepted').length;
-    const rejected = Object.values(_diffHunkStatuses).filter((s) => s === 'rejected').length;
-    const processed = accepted + rejected;
-    const pending = Math.max(0, total - processed);
     const demo = isDemoRepair(currentRepairJob);
     const providerSafe = providerAllowsPublishing(currentRepairJob);
     const verification = repairVerification(currentRepairJob);
+    const missingTools = missingVerificationTools(currentRepairJob);
     const canRequestHostVerification = (
       currentRepairJob?.status === 'review_ready'
       && verification.status === 'unverified'
@@ -1623,56 +1732,47 @@
       && providerSafe
       && verification.status === 'passed'
       && total > 0
-      && pending === 0
-      && accepted > 0
       && _diffJobId === activeJobId
-      && decisionWrites === 0
     );
     if (diffViewStatus) {
       if (total === 0) {
         diffViewStatus.textContent = '没有可提交的代码修改';
-      } else if (decisionWrites > 0) {
-        diffViewStatus.textContent = `正在保存审核结果 · ${accepted} 处接受 / ${rejected} 处拒绝`;
-      } else if (pending > 0) {
-        diffViewStatus.textContent = `${accepted} 处接受 / ${rejected} 处拒绝 / ${pending} 处待处理`;
-      } else if (accepted === 0) {
-        diffViewStatus.textContent = `已拒绝全部 ${rejected} 处修改 · 至少接受一处才能提交`;
+      } else if (verification.status !== 'passed') {
+        diffViewStatus.textContent = '以上是完整代码修改 · 验证通过后可选择提交';
       } else {
-        diffViewStatus.textContent = `审核完成 · ${accepted} 处接受 / ${rejected} 处拒绝`;
+        diffViewStatus.textContent = '以上是将要提交的完整修改 · 提交后是否合并由原仓库管理员决定';
       }
     }
     if (repairPublish) {
       repairPublish.disabled = !(readyToPublish || canRequestHostVerification);
       if (demo) {
-        repairPublish.textContent = '演示任务不可发布';
-        repairPublish.title = 'fake/demo Provider 只用于体验流程，禁止创建 Draft PR';
+        repairPublish.textContent = '演示任务不可提交';
+        repairPublish.title = '演示内容不会提交到 GitHub';
       } else if (!providerSafe) {
-        repairPublish.textContent = 'Provider 未确认，不能发布';
+        repairPublish.textContent = '当前任务不可提交';
         repairPublish.title = '任务必须记录一个明确的非演示 Provider';
       } else if (verification.status === 'failed') {
-        repairPublish.textContent = '验证失败，不能发布';
-        repairPublish.title = '修复测试或验证未通过';
+        repairPublish.textContent = missingTools.length
+          ? `缺少 ${missingTools.map(verificationToolLabel).join('、')}，暂不能提交`
+          : '修复未通过验证';
+        repairPublish.title = missingTools.length
+          ? '测试工具未安装，代码仍可 Review；完成验证后可以提交'
+          : '修复测试或验证未通过';
       } else if (canRequestHostVerification) {
         repairPublish.textContent = '在本机运行测试…';
         repairPublish.title = '将先确认风险，再执行仓库里的测试代码';
       } else if (verification.status !== 'passed') {
-        repairPublish.textContent = '未验证，不能发布';
+        repairPublish.textContent = '等待验证';
         repairPublish.title = '需要明确的测试或验证通过结果';
       } else if (total === 0) {
         repairPublish.textContent = '没有可提交的修改';
         repairPublish.title = '当前任务没有生成代码差异';
-      } else if (decisionWrites > 0) {
-        repairPublish.textContent = '正在保存审核结果…';
-        repairPublish.title = '审核结果保存完成后即可提交';
-      } else if (pending > 0) {
-        repairPublish.textContent = `还有 ${pending} 处修改待审核`;
-        repairPublish.title = '请接受或拒绝每一处修改';
-      } else if (accepted === 0) {
-        repairPublish.textContent = '至少接受一处修改';
-        repairPublish.title = '全部拒绝时没有内容可以提交';
+      } else if (!currentGithubAuthenticated) {
+        repairPublish.textContent = '连接 GitHub 后提交';
+        repairPublish.title = '点击连接 GitHub，然后提交这份完整修复';
       } else {
-        repairPublish.textContent = '确认并创建 Draft PR';
-        repairPublish.title = '创建 Draft PR；仍可在 GitHub 上继续审核';
+        repairPublish.textContent = '提交修复';
+        repairPublish.title = '提交这份完整修复；是否合并由原仓库管理员决定';
       }
     }
   };
@@ -1740,6 +1840,24 @@
           updateDiffCtaStatus();
         }
       });
+    }
+  };
+
+  const confirmFullDiffForSubmission = async (jobId) => {
+    const hunks = (_diffData?.files || []).flatMap((file) => file.hunks || []);
+    if (!hunks.length || _diffJobId !== jobId) {
+      throw new Error('当前没有可提交的修改');
+    }
+    // “提交修复”代表提交当前看到的整份 patch。后端仍记录完整确认，
+    // 但不再让用户逐段维护接受/拒绝状态。
+    for (const hunk of hunks) {
+      if (_diffHunkStatuses[hunk.id] === 'accepted') continue;
+      await fetchJson(`/api/repairs/${encodeURIComponent(jobId)}/hunk-decision`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hunk_id: String(hunk.id), decision: 'accepted' }),
+      });
+      _diffHunkStatuses[hunk.id] = 'accepted';
     }
   };
 
@@ -1861,7 +1979,7 @@
         _diffEditorView.destroy();
         _diffEditorView = null;
       }
-      diffViewEditor.innerHTML = `<div class="diff-view-fallback-note" role="status">增强代码视图暂时不可用，已切换到离线纯文本审核。</div><pre class="diff-view-plain">${escapeHtml(doc)}</pre>`;
+      diffViewEditor.innerHTML = `<div class="diff-view-fallback-note" role="status">增强代码视图暂时不可用，已显示离线文本改动。</div><pre class="diff-view-plain">${escapeHtml(doc)}</pre>`;
       return true;
     }
     if (!isCurrentRequest() || !mod || !diffViewEditor) return false;
@@ -1911,7 +2029,11 @@
     if (!diffView) return;
     const jobId = String(job?.id || '');
     if (!jobId) return;
+    if (diffViewOverview) diffViewOverview.scrollTop = 0;
     if (diffViewVerification) diffViewVerification.innerHTML = renderDiffVerification(job);
+    if (diffViewSummary) {
+      diffViewSummary.textContent = job.agent_summary || 'AI 已完成修改。下面是将要提交的完整代码改动。';
+    }
     _diffLoadController?.abort();
     const controller = new AbortController();
     _diffLoadController = controller;
@@ -1945,9 +2067,9 @@
       }
       const totalHunks = allHunks.length;
       const summary = diff.summary || { files: 0, hunks: 0, adds: 0, rems: 0 };
-      if (diffViewTitle) diffViewTitle.textContent = `${diff.repository || currentRepairRepository || ''} · ${totalHunks} hunks`;
+      if (diffViewTitle) diffViewTitle.textContent = '修复内容';
       if (diffViewStats) {
-        diffViewStats.innerHTML = `<span>${summary.files} files</span> · <span>${totalHunks} hunks</span> · <span class="add">+${summary.adds}</span> <span class="rem">−${summary.rems}</span>`;
+        diffViewStats.innerHTML = `<span>${summary.files} 个文件</span> · <span class="add">新增 ${summary.adds}</span> · <span class="rem">删除 ${summary.rems}</span>`;
       }
       // 空 diff: 显示空态, 不强行让 CodeMirror 渲染 0 行
       if (totalHunks === 0) {
@@ -1959,7 +2081,7 @@
         const emptyTitle = workspaceMissing ? '历史任务的工作区已经不存在' : '这次没有生成代码修改';
         const emptyDetail = workspaceMissing
           ? '本地工作区或修复产物已被清理，无法恢复 diff。请从 Issue 重新发起分析。'
-          : '没有可审核、可验证或可提交的 diff。这不代表 Issue 已经修复，请调整指令后重新运行。';
+          : '没有可查看或可提交的代码改动。这不代表 Issue 已经修复，请调整说明后重新运行。';
         if (diffViewEditor) diffViewEditor.innerHTML = `<div class="diff-view-empty"><span class="title">${emptyTitle}</span><span>${emptyDetail}</span></div>`;
         if (diffViewSidebar) diffViewSidebar.innerHTML = '';
         _diffEditorView = null;
@@ -2774,6 +2896,11 @@
       }
       return;
     }
+    if (event.target.closest('[data-toggle-repair-history]')) {
+      showRepairHistory = !showRepairHistory;
+      renderRepairTaskList(repairJobs);
+      return;
+    }
     const repairTaskButton = event.target.closest('[data-repair-job]');
     if (repairTaskButton) {
       const job = repairJobs.find((item) => item.id === repairTaskButton.dataset.repairJob);
@@ -2995,7 +3122,7 @@
           sessionGeneration === repairSessionGeneration
           && String(currentRepairJob?.id || '') === jobId
         ) {
-          repairGuidanceSend.textContent = '发送指导';
+          repairGuidanceSend.textContent = '让 AI 调整';
           if (currentRepairJob?.status === 'review_ready') repairGuidanceSend.disabled = false;
         }
       }
@@ -3043,28 +3170,22 @@
       if (!providerAllowsPublishing(currentRepairJob)) {
         updateDiffCtaStatus();
         showToast(isDemoRepair(currentRepairJob)
-          ? '演示模式禁止创建 Draft PR'
-          : '任务 Provider 未确认，为安全起见不能发布');
+          ? '演示内容不能提交到 GitHub'
+          : '当前任务来源未确认，暂时不能提交');
         return;
       }
       if (repairVerification(currentRepairJob).status !== 'passed') {
         updateDiffCtaStatus();
-        showToast('需要明确的测试或验证通过结果后才能发布');
+        showToast('修复通过测试或验证后才能提交');
         return;
       }
-      const decisions = Object.values(_diffHunkStatuses);
-      const accepted = decisions.filter((status) => status === 'accepted').length;
-      const reviewComplete = (
-        _diffData
-        && _diffJobId === jobId
-        && decisions.length > 0
-        && decisions.every((status) => status === 'accepted' || status === 'rejected')
-        && accepted > 0
-        && pendingDecisionWrites(jobId) === 0
-      );
-      if (!reviewComplete) {
+      if (!currentGithubAuthenticated) {
+        if (githubSetupDialog) githubSetupDialog.showModal();
+        return;
+      }
+      if (!_diffData || _diffJobId !== jobId || !Object.keys(_diffHunkStatuses).length) {
         updateDiffCtaStatus();
-        showToast('请先审核全部修改，并至少接受一处');
+        showToast('完整改动还没有加载完成，请稍后再试');
         return;
       }
       const generation = ++publishGeneration;
@@ -3076,6 +3197,8 @@
       repairPublish.setAttribute('aria-busy', 'true');
       repairPublish.textContent = '正在准备提交…';
       try {
+        await confirmFullDiffForSubmission(jobId);
+        if (!isCurrentPublish()) return;
         const confirmation = await fetchJson(
           `/api/repairs/${encodeURIComponent(jobId)}/confirm-token`,
         );
@@ -3095,10 +3218,10 @@
         if (!isCurrentPublish()) return;
         renderRepairSession(result);
         pollRepairJob(result.id);
-        showToast('已确认，正在创建 Draft PR');
+        showToast('修复已提交，等待仓库管理员处理');
       } catch (error) {
         if (!isCurrentPublish()) return;
-        showToast(error.message || 'Draft PR 提交失败，请重试');
+        showToast(error.message || '修复提交失败，请重试');
         updateDiffCtaStatus();
       } finally {
         if (isCurrentPublish()) repairPublish.removeAttribute('aria-busy');

@@ -66,23 +66,15 @@ _VERIFY_TIMEOUT_SECONDS = 300
 _VERIFY_OUTPUT_LIMIT = 12_000
 
 
-def _verification_commands(workspace: Path) -> list[list[str]]:
-    """Detect a small, auditable set of conventional verification commands.
-
-    Repository files are untrusted, so this function never accepts command
-    text from the repository.  In particular, package.json is only consulted
-    to determine whether the well-known ``test``/``lint`` script names exist.
-    The commands are still capable of executing repository code and therefore
-    must only be run by :func:`_verify_changes` inside a sandbox or after an
-    explicit host-execution opt-in.
-    """
+def _commands_for_project_root(root: Path) -> list[list[str]]:
+    """Return fixed conventional commands for one project root."""
 
     commands: list[list[str]] = []
-    if (workspace / "go.mod").is_file():
+    if (root / "go.mod").is_file():
         commands.append(["go", "test", "./..."])
-    if (workspace / "Cargo.toml").is_file():
+    if (root / "Cargo.toml").is_file():
         commands.append(["cargo", "test", "--locked"])
-    package_json = workspace / "package.json"
+    package_json = root / "package.json"
     if package_json.is_file():
         try:
             package = json.loads(package_json.read_text(encoding="utf-8"))
@@ -100,11 +92,77 @@ def _verification_commands(workspace: Path) -> list[list[str]]:
         "setup.cfg",
         "requirements.txt",
     )
-    if (workspace / "tests").is_dir() and any(
-        (workspace / marker).is_file() for marker in python_markers
+    if (root / "tests").is_dir() and any(
+        (root / marker).is_file() for marker in python_markers
     ):
         commands.append(["python", "-m", "pytest", "-q"])
-    return commands[:3]
+    return commands
+
+
+def _changed_project_roots(workspace: Path) -> list[str]:
+    """Return safe, direct child roots containing current working-tree changes."""
+
+    try:
+        changed = _run(
+            ["git", "status", "--porcelain", "--untracked-files=all"],
+            cwd=workspace,
+        ).stdout
+    except (OSError, subprocess.SubprocessError, RuntimeError):
+        return []
+    roots: list[str] = []
+    for line in changed.splitlines():
+        path = line[3:].strip() if len(line) > 3 else ""
+        if " -> " in path:
+            path = path.rsplit(" -> ", 1)[-1]
+        first, separator, _ = path.partition("/")
+        if (
+            separator
+            and re.fullmatch(r"[A-Za-z0-9._-]+", first)
+            and (workspace / first).is_dir()
+            and first not in roots
+        ):
+            roots.append(first)
+    return roots
+
+
+def _verification_specs(workspace: Path) -> list[dict[str, object]]:
+    """Detect commands plus the project-relative directory they must run in."""
+
+    specs = [
+        {"argv": command, "cwd": "."}
+        for command in _commands_for_project_root(workspace)
+    ]
+    if specs:
+        return specs[:3]
+
+    roots = _changed_project_roots(workspace)
+    if not roots:
+        roots = ["api", "server", "backend", "web", "frontend", "client"]
+    for relative_root in roots:
+        root = workspace / relative_root
+        if not root.is_dir():
+            continue
+        specs.extend(
+            {"argv": command, "cwd": relative_root}
+            for command in _commands_for_project_root(root)
+        )
+        if len(specs) >= 3:
+            break
+    return specs[:3]
+
+
+def _verification_commands(workspace: Path) -> list[list[str]]:
+    """Detect a small, auditable set of conventional verification commands.
+
+    Repository files are untrusted, so this function never accepts command
+    text from the repository.  In particular, package.json is only consulted
+    to determine whether the well-known ``test``/``lint`` script names exist.
+    The commands are still capable of executing repository code and therefore
+    must only be run by :func:`_verify_changes` inside a sandbox or after an
+    explicit host-execution opt-in.
+    """
+
+    return [list(spec["argv"]) for spec in _verification_specs(workspace)]
 
 
 def _host_verification_allowed(config: "dict[str, object] | None") -> bool:
@@ -169,8 +227,9 @@ def _verify_changes(
 ) -> dict[str, object]:
     """Run detected checks safely and return a JSON-serialisable record."""
 
-    commands = _verification_commands(workspace)
-    if not commands:
+    specs = _verification_specs(workspace)
+    commands = [list(spec["argv"]) for spec in specs]
+    if not specs:
         return {
             "status": "unverified",
             "reason": "no_tests_detected",
@@ -190,13 +249,30 @@ def _verify_changes(
                 "中显式选择承担风险。"
             ),
             "commands": [
-                {"argv": command, "display": shlex.join(command), "exit_code": None}
-                for command in commands
+                {
+                    "argv": list(spec["argv"]),
+                    "cwd": str(spec["cwd"]),
+                    "display": (
+                        shlex.join(list(spec["argv"]))
+                        if spec["cwd"] == "."
+                        else f"(cd {shlex.quote(str(spec['cwd']))} && {shlex.join(list(spec['argv']))})"
+                    ),
+                    "exit_code": None,
+                }
+                for spec in specs
             ],
         }
 
     records: list[dict[str, object]] = []
-    for command in commands:
+    for spec in specs:
+        command = list(spec["argv"])
+        relative_cwd = str(spec["cwd"])
+        display = (
+            shlex.join(command)
+            if relative_cwd == "."
+            else f"(cd {shlex.quote(relative_cwd)} && {shlex.join(command)})"
+        )
+        command_cwd = workspace if relative_cwd == "." else workspace / relative_cwd
         if image:
             docker_executable = find_desktop_executable("docker") or "docker"
             uid = getattr(os, "getuid", lambda: 1000)()
@@ -214,7 +290,11 @@ def _verify_changes(
                 # previous verification attempt's stale workspace ``.pyc``.
                 "--env", "PYTHONPYCACHEPREFIX=/tmp/ghe-pycache",
                 "--volume", f"{workspace}:/workspace:rw",
-                "--workdir", "/workspace",
+                "--workdir", (
+                    "/workspace"
+                    if relative_cwd == "."
+                    else f"/workspace/{relative_cwd}"
+                ),
                 image,
                 *command,
             ]
@@ -250,7 +330,7 @@ def _verify_changes(
         try:
             result = subprocess.run(
                 arguments,
-                cwd=workspace,
+                cwd=command_cwd,
                 env=verification_env,
                 text=True,
                 capture_output=True,
@@ -259,7 +339,8 @@ def _verify_changes(
             )
             record = {
                 "argv": command,
-                "display": shlex.join(command),
+                "cwd": relative_cwd,
+                "display": display,
                 "mode": mode,
                 "exit_code": result.returncode,
                 "stdout_summary": _summarize_verification_output(result.stdout),
@@ -268,7 +349,8 @@ def _verify_changes(
         except subprocess.TimeoutExpired as exc:
             record = {
                 "argv": command,
-                "display": shlex.join(command),
+                "cwd": relative_cwd,
+                "display": display,
                 "mode": mode,
                 "exit_code": None,
                 "timed_out": True,
@@ -278,7 +360,8 @@ def _verify_changes(
         except OSError as exc:
             record = {
                 "argv": command,
-                "display": shlex.join(command),
+                "cwd": relative_cwd,
+                "display": display,
                 "mode": mode,
                 "exit_code": None,
                 "stderr_summary": str(exc)[:2_000],
@@ -288,10 +371,21 @@ def _verify_changes(
                 shutil.rmtree(host_pycache, ignore_errors=True)
         records.append(record)
         if record.get("exit_code") != 0:
+            output = "\n".join(
+                str(record.get(key) or "")
+                for key in ("stdout_summary", "stderr_summary")
+            )
+            if re.search(r"(?:No module named|ModuleNotFoundError)", output):
+                return {
+                    "status": "unverified",
+                    "reason": "dependency_missing",
+                    "message": f"验证环境缺少项目依赖：{display}",
+                    "commands": records,
+                }
             return {
                 "status": "failed",
                 "reason": "test_failed",
-                "message": f"验证失败：{shlex.join(command)}",
+                "message": f"验证失败：{display}",
                 "commands": records,
             }
     return {
@@ -303,8 +397,29 @@ def _verify_changes(
 
 
 def _write_job(path: Path, job: dict[str, object], **changes: object) -> None:
+    previous_status = str(job.get("status") or "")
+    previous_message = str(job.get("message") or "")
+    next_status = str(changes.get("status", previous_status) or "")
+    next_message = str(changes.get("message", previous_message) or "")
+    now = datetime.now(timezone.utc).isoformat()
+    if (
+        ("status" in changes or "message" in changes)
+        and (next_status != previous_status or next_message != previous_message)
+    ):
+        existing = job.get("progress_history")
+        history = [item for item in existing if isinstance(item, dict)] if isinstance(existing, list) else []
+        entry = {
+            "status": next_status,
+            "message": next_message,
+            "created_at": now,
+        }
+        if not history or any(
+            history[-1].get(key) != entry[key] for key in ("status", "message")
+        ):
+            history.append(entry)
+        changes["progress_history"] = history[-24:]
     job.update(changes)
-    job["updated_at"] = datetime.now(timezone.utc).isoformat()
+    job["updated_at"] = now
     atomic_write_json(path, job)
 
 
@@ -497,6 +612,7 @@ def _agent_pass(
     if not changed.strip():
         detail = result.summary.strip() or "Agent did not explain why no change was produced."
         raise RuntimeError(f"Coding agent produced no code change: {detail[:1_500]}")
+    _write_job(path, job, status="verifying", message="代码修改完成，正在运行自动验证…")
     verification = _verify_changes(workspace, config)
     verification_attempts: list[dict[str, object]] = [verification]
     # A real repair loop must use verification feedback, not merely report it.
@@ -597,8 +713,8 @@ def _agent_pass(
         status="review_ready",
         message=(
             f"代码修改已完成（验证：{verification_status}）。"
-            f"{verification_message} 你可以继续指导"
-            + ("；演示模式禁止发布。" if is_demo else "，或确认创建 Draft PR。")
+            f"{verification_message} 请查看完整改动；你可以继续调整"
+            + ("；演示模式不能提交。" if is_demo else "，验证通过后再决定是否提交修复。")
         ),
         changed_files=changed_files,
         diff_stat=diff_stat,
@@ -939,7 +1055,13 @@ def run_repair_job(
                 env_purpose="gh",
             )
             _run(["git", "checkout", "-b", branch], cwd=workspace)
-            _write_job(path, job, branch=branch)
+            _write_job(
+                path,
+                job,
+                status="analyzing",
+                message="代码已准备好，正在读取 Issue 并定位相关文件…",
+                branch=branch,
+            )
             task = str(job["task_markdown"])
         elif mode == "revise":
             guidance = list(job.get("guidance") or [])

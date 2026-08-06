@@ -12,6 +12,7 @@ from src.repair_worker import (
     _agent_pass,
     _verification_commands,
     _verify_changes,
+    _write_job,
     _prepare_review_index,
     _publish_repair,
     _pull_request_url,
@@ -20,6 +21,21 @@ from src.repair_worker import (
     render_repair_prompt,
     run_repair_job,
 )
+
+
+def test_write_job_records_distinct_progress_updates(tmp_path):
+    job_path = tmp_path / "job.json"
+    job = {"id": "abc123", "status": "queued", "message": "已排队"}
+
+    _write_job(job_path, job, status="cloning", message="正在准备工作区")
+    _write_job(job_path, job, branch="ghe/issue-1")
+    _write_job(job_path, job, status="coding", message="正在修改代码")
+
+    saved = json.loads(job_path.read_text(encoding="utf-8"))
+    assert [(item["status"], item["message"]) for item in saved["progress_history"]] == [
+        ("cloning", "正在准备工作区"),
+        ("coding", "正在修改代码"),
+    ]
 
 
 def test_pull_request_url_extracts_created_draft_pr():
@@ -174,6 +190,62 @@ def test_verification_detects_only_fixed_conventional_commands(tmp_path):
         ["npm", "run", "lint"],
         ["python", "-m", "pytest", "-q"],
     ]
+
+
+def test_verification_detects_changed_python_monorepo_root(tmp_path):
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    api = tmp_path / "api"
+    (api / "tests").mkdir(parents=True)
+    (api / "pyproject.toml").write_text("[project]\nname='api'\n", encoding="utf-8")
+    changed = api / "service.py"
+    changed.write_text("VALUE = 1\n", encoding="utf-8")
+
+    assert _verification_commands(tmp_path) == [["python", "-m", "pytest", "-q"]]
+
+
+def test_monorepo_verification_runs_in_changed_project_directory(tmp_path):
+    api = tmp_path / "api"
+    api.mkdir()
+    completed = SimpleNamespace(returncode=0, stdout="1 passed", stderr="")
+    with (
+        patch(
+            "src.repair_worker._verification_specs",
+            return_value=[{"argv": ["python", "-m", "pytest", "-q"], "cwd": "api"}],
+        ),
+        patch("src.repair_worker.find_desktop_executable", return_value=None),
+        patch("src.repair_worker.subprocess.run", return_value=completed) as run,
+    ):
+        verification = _verify_changes(
+            tmp_path, {"repair": {"allow_host_verification": True}}
+        )
+
+    assert verification["status"] == "passed"
+    assert verification["commands"][0]["cwd"] == "api"
+    assert verification["commands"][0]["display"].startswith("(cd api && ")
+    assert run.call_args.kwargs["cwd"] == api
+
+
+def test_missing_python_dependency_is_environment_incomplete(tmp_path):
+    completed = SimpleNamespace(
+        returncode=1,
+        stdout="",
+        stderr="ModuleNotFoundError: No module named 'sqlalchemy'",
+    )
+    with (
+        patch(
+            "src.repair_worker._verification_specs",
+            return_value=[{"argv": ["python", "-m", "pytest", "-q"], "cwd": "."}],
+        ),
+        patch("src.repair_worker.find_desktop_executable", return_value=None),
+        patch("src.repair_worker.subprocess.run", return_value=completed),
+    ):
+        verification = _verify_changes(
+            tmp_path, {"repair": {"allow_host_verification": True}}
+        )
+
+    assert verification["status"] == "unverified"
+    assert verification["reason"] == "dependency_missing"
+    assert verification["commands"][0]["exit_code"] == 1
 
 
 def test_verification_refuses_host_execution_without_explicit_opt_in(tmp_path):

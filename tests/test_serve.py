@@ -826,6 +826,23 @@ class ServeSubcommandTest(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertIn("明确同意".encode(), body)
 
+    def test_guidance_route_immediately_records_second_pass_progress(self):
+        job_id = "guidancehistory"
+        self._seed_review_workspace(job_id)
+
+        status, _, body = _http_post(
+            self.port,
+            f"/api/repairs/{job_id}/guidance",
+            json.dumps({"message": "请补上配置变更"}).encode("utf-8"),
+            "application/json",
+        )
+
+        self.assertEqual(status, 202)
+        payload = json.loads(body)
+        self.assertEqual(payload["status"], "queued")
+        self.assertEqual(payload["progress_history"][-1]["status"], "queued")
+        self.assertIn("已收到你的指导", payload["progress_history"][-1]["message"])
+
     def test_coding_agent_configure_writes_secret_without_echoing_it(self):
         original = self.config_path.read_text(encoding="utf-8")
         secret = "sk-test-secret-never-echo"
@@ -1040,7 +1057,7 @@ class ServeSubcommandTest(unittest.TestCase):
         self.assertIn("text/javascript", headers.get("Content-Type", ""))
         self.assertIn(b"assistant-composer", script)
         self.assertIn("自动修复".encode(), script)
-        self.assertIn("先在你的副本中准备修改".encode(), script)
+        self.assertIn("先查看完整改动，满意后再决定是否提交".encode(), script)
         self.assertIn(b"/api/repair-capabilities", script)
         self.assertIn(b"/api/connections/status", script)
         self.assertIn(b"/api/connections/start", script)
@@ -1068,10 +1085,19 @@ class ServeSubcommandTest(unittest.TestCase):
         self.assertIn("当前仓库", body)
         self.assertIn("点击切换", body)
         self.assertIn('id="repair-inspector"', body)
+        main_start = body.index('<main class="workspace"')
+        main_end = body.index("</main>", main_start)
+        inspector_position = body.index('id="repair-inspector"')
+        self.assertLess(main_start, inspector_position)
+        self.assertLess(inspector_position, main_end)
         self.assertIn('id="repair-task-list"', body)
         self.assertNotIn('id="repair-dialog"', body)
         self.assertIn('id="repair-guidance-input"', body)
-        self.assertIn("确认并提交修复草稿", body)
+        self.assertIn('id="repair-skip-submit"', body)
+        self.assertIn("暂不提交", body)
+        self.assertIn("提交修复", body)
+        self.assertNotIn("接受全部", body)
+        self.assertNotIn("拒绝全部", body)
         self.assertIn("准备自动修复", body)
         self.assertIn("claude auth login", body)
         self.assertIn("从我的仓库选择", body)

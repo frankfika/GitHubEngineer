@@ -36,7 +36,7 @@ def test_packaged_javascript_is_valid_and_has_race_guards() -> None:
     assert "String(currentRepairJob?.id || '') === jobId" in source
     assert "_decisionWriteTail" in source
     assert "_decisionVersions" in source
-    assert "pendingDecisionWrites(jobId) === 0" in source
+    assert "await confirmFullDiffForSubmission(jobId)" in source
     assert "generation === publishGeneration" in source
     assert "if (!job) {\n      // Opening a new issue" in source
     assert "hideDiffView();\n      setRepairPhase('queued');" in source
@@ -107,6 +107,9 @@ def test_failed_verification_remains_visible_and_can_be_retried_from_diff() -> N
     assert "data-retry-verification" in source
     assert "查看失败摘要" in source
     assert "将再次在本机执行这个仓库的测试代码" in source
+    assert "dependency_missing" in source
+    assert "重新检测并验证" in source
+    assert "if (diffViewOverview) diffViewOverview.scrollTop = 0" in source
     assert 'id="diff-view-verification" aria-live="polite"' in shell_source
 
 
@@ -146,12 +149,19 @@ def test_repair_ux_exposes_real_phases_verification_and_data_boundary() -> None:
     source = APP_JS
     shell_source = (ROOT / "src/web_ui.py").read_text(encoding="utf-8")
 
-    assert "分析并准备修复" in source
-    assert "读取代码 → 定位问题 → 修改代码 → 运行验证 → 等待审核" in source
+    assert "开始修复" in source
+    assert "完成后你只需要查看改动，再决定是否提交" in source
     assert "const order = ['read', 'locate', 'modify', 'verify', 'review']" in source
     assert "验证通过" in source
     assert "验证失败" in source
-    assert "未验证" in source
+    assert "等待验证" in source
+    assert "验证环境不完整" in source
+    assert "这不表示代码本身失败" in source
+    assert "missingVerificationTools" in source
+    assert "实时修复过程" in source
+    assert "每 3 秒自动更新" in source
+    assert "读取 Issue 与代码" in source
+    assert "运行测试与验证" in source
     assert "这不代表 Issue 已经修复" in source
     assert "历史任务的工作区已经不存在" in source
     assert "Issue 内容与为定位问题选取的仓库源码片段会发送" in source
@@ -171,8 +181,8 @@ def test_demo_and_unverified_repairs_fail_closed_before_publish() -> None:
     assert "Boolean(provider) && !isDemoRepair(job)" in source
     assert "&& providerSafe" in source
     assert "&& verification.status === 'passed'" in source
-    assert "演示模式禁止创建 Draft PR" in source
-    assert "需要明确的测试或验证通过结果后才能发布" in source
+    assert "演示内容不能提交到 GitHub" in source
+    assert "修复通过测试或验证后才能提交" in source
 
     click_guard = source.index("if (!providerAllowsPublishing(currentRepairJob))")
     confirmation_request = source.index("/confirm-token", click_guard)
@@ -180,15 +190,29 @@ def test_demo_and_unverified_repairs_fail_closed_before_publish() -> None:
     assert click_guard < confirmation_request < publish_request
 
 
-def test_diff_review_has_an_offline_fallback_without_losing_hunk_controls() -> None:
+def test_diff_preview_has_an_offline_fallback_and_single_submit_decision() -> None:
     source = APP_JS
+    styles = APP_CSS
+    shell = render_shell(title="test", body="", repos=[])
 
-    assert "增强代码视图暂时不可用，已切换到离线纯文本审核" in source
+    assert "增强代码视图暂时不可用，已显示离线文本改动" in source
     assert 'class="diff-view-plain"' in source
     assert "const { doc } = _buildDiffDoc(diffData);" in source
     assert "${escapeHtml(doc)}" in source
     assert "renderDiffSidebar();\n      const mounted = await mountDiffEditor" in source
     assert "if (!mounted || !isCurrentRequest()) return;" in source
+    assert "const confirmFullDiffForSubmission" in source
+    assert 'id="repair-publish"' in shell
+    assert 'id="repair-skip-submit"' in shell
+    assert "暂不提交" in shell
+    assert "代码改动" in shell
+    assert "滚动查看全部文件" in shell
+    assert "repairSkipSubmit.hidden = !canRevise" in source
+    assert ".diff-view-overview { max-height: 156px; overflow: auto;" in styles
+    assert ".diff-view-body { display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 180px;" in styles
+    assert 'id="diff-accept-all"' not in shell
+    assert 'id="diff-reject-all"' not in shell
+    assert 'id="diff-continue-chat"' not in shell
 
 
 def test_coding_agent_indicator_is_keyboard_accessible_and_reuses_saved_key() -> None:

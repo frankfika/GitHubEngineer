@@ -695,8 +695,25 @@ pre { padding: 13px 15px; overflow-x: auto; background: var(--surface-soft); bor
 .repair-event.user .repair-event-card { color: var(--surface-solid); background: var(--accent); border: 0; border-radius: 13px 5px 13px 13px; }
 .repair-event-card strong { color: var(--text); }
 .repair-event.user .repair-event-card strong { color: inherit; }
+.repair-live-progress { margin-top: 13px; padding-top: 12px; border-top: 1px solid var(--line); }
+.repair-live-progress-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 9px; }
+.repair-live-progress-heading strong { font-size: 12px; }
+.repair-live-progress-heading span { color: var(--text-3); font-size: 10px; }
+.repair-progress-list { display: grid; gap: 0; }
+.repair-progress-item { position: relative; display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; gap: 9px; align-items: start; min-height: 38px; padding-bottom: 9px; }
+.repair-progress-item:last-child { min-height: 0; padding-bottom: 0; }
+.repair-progress-item:not(:last-child)::before { content: ""; position: absolute; top: 12px; bottom: 0; left: 4px; width: 1px; background: var(--line); }
+.repair-progress-dot { position: relative; z-index: 1; width: 9px; height: 9px; margin-top: 3px; border: 2px solid var(--surface-solid); border-radius: 50%; background: var(--text-3); box-shadow: 0 0 0 1px var(--line-strong); }
+.repair-progress-item.done .repair-progress-dot { background: var(--success); }
+.repair-progress-item.current .repair-progress-dot { background: var(--warning); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 16%, transparent); animation: repair-progress-pulse 1.5s ease-in-out infinite; }
+.repair-progress-item.failed .repair-progress-dot { background: var(--danger); }
+.repair-progress-copy { min-width: 0; }
+.repair-progress-copy strong { display: block; font-size: 11.5px; line-height: 1.35; }
+.repair-progress-copy span { display: block; margin-top: 2px; color: var(--text-3); font-size: 10.5px; line-height: 1.45; }
+.repair-progress-time { color: var(--text-3); font-size: 9.5px; white-space: nowrap; }
+@keyframes repair-progress-pulse { 50% { opacity: .45; transform: scale(.82); } }
 .repair-output { margin-top: 9px; padding: 9px 10px; color: var(--text-2); background: var(--surface-soft); border: 1px solid var(--line); border-radius: 8px; font: 10px/1.5 "SF Mono", ui-monospace, monospace; white-space: pre-wrap; }
-.repair-controls { display: grid; gap: 9px; padding: 13px 16px 15px; border-top: 1px solid var(--line); background: var(--surface-solid); }
+.repair-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 10px; padding: 14px 18px 18px; border-top: 1px solid var(--line); background: var(--surface-solid); }
 .repair-controls textarea { width: 100%; min-height: 52px; max-height: 110px; resize: none; padding: 10px 11px; color: var(--text); background: var(--surface-soft); border: 1px solid var(--line); border-radius: 10px; outline: 0; }
 .repair-controls textarea:focus { border-color: var(--line-strong); }
 .repair-controls textarea:disabled { opacity: .55; }
@@ -704,16 +721,21 @@ pre { padding: 13px 15px; overflow-x: auto; background: var(--surface-soft); bor
 .repair-actions .primary-button:disabled, .repair-actions .soft-button:disabled { cursor: not-allowed; opacity: .45; }
 /* diff view (CodeMirror 6) — sits inside the repair inspector and
    replaces the regular repair stream when the job is in review_ready. */
-.repair-inspector-header-actions { display: flex; gap: 8px; align-items: center; }
-.diff-view { display: grid; grid-template-rows: auto 1fr auto; min-height: 0; flex: 1; border-top: 1px solid var(--line); background: var(--surface-solid); }
+.repair-inspector-header-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; align-items: center; }
+.diff-view { display: grid; grid-template-rows: auto minmax(0, auto) minmax(180px, 1fr) auto; min-height: 0; overflow: hidden; flex: 1; border-top: 1px solid var(--line); background: var(--surface-solid); }
 .diff-view[hidden] { display: none; }
 .diff-view-meta { display: flex; align-items: center; gap: 14px; padding: 12px 18px; border-bottom: 1px solid var(--line); font-size: 11px; color: var(--text-2); flex-wrap: wrap; }
 .diff-view-meta strong { color: var(--text); font-size: 12px; font-weight: 650; }
 .diff-view-stats { color: var(--text-3); font-family: "SF Mono", ui-monospace, monospace; font-size: 10.5px; }
 .diff-view-stats .add { color: var(--success); }
 .diff-view-stats .rem { color: var(--danger); }
+.diff-view-overview { max-height: 156px; overflow: auto; border-bottom: 1px solid var(--line); }
+.diff-view-summary { margin: 0; padding: 12px 18px 5px; color: var(--text); font-size: 12px; line-height: 1.55; white-space: pre-wrap; }
 .diff-view-upgrade { margin-left: auto; padding: 4px 10px; color: var(--success); background: color-mix(in srgb, var(--success) 14%, transparent); border-radius: 999px; font-size: 10.5px; }
-.diff-view-body { display: grid; grid-template-columns: 1fr 320px; min-height: 0; overflow: hidden; }
+.diff-view-body { display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 180px; overflow: hidden; }
+.diff-view-code-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 18px; border-bottom: 1px solid var(--line); background: var(--surface-soft); }
+.diff-view-code-heading strong { font-size: 12px; }
+.diff-view-code-heading span { color: var(--text-3); font-size: 10.5px; }
 .diff-view-editor { min-width: 0; overflow: auto; }
 .diff-view-fallback-note { padding: 9px 14px; color: var(--warning); background: color-mix(in srgb, var(--warning) 9%, var(--surface)); border-bottom: 1px solid var(--line); font-size: 11px; }
 .diff-view-plain { min-width: 100%; width: max-content; min-height: calc(100% - 38px); margin: 0; padding: 14px 18px; color: var(--text-2); background: var(--surface-solid); font: 12px/1.55 "SF Mono", ui-monospace, monospace; white-space: pre; tab-size: 4; }
@@ -747,8 +769,8 @@ pre { padding: 13px 15px; overflow-x: auto; background: var(--surface-soft); bor
 .diff-hunk-card .hunk-btn-accept:hover { background: color-mix(in srgb, var(--success) 14%, var(--surface-soft)); }
 .diff-hunk-card .hunk-btn-reject { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 35%, var(--line)); }
 .diff-hunk-card .hunk-btn-reject:hover { background: color-mix(in srgb, var(--danger) 14%, var(--surface-soft)); }
-.diff-view-cta { display: flex; align-items: center; gap: 10px; padding: 12px 18px; border-top: 1px solid var(--line); background: var(--surface); flex-wrap: wrap; }
-.diff-view-status { flex: 1; color: var(--text-2); font-family: "SF Mono", ui-monospace, monospace; font-size: 11px; }
+.diff-view-cta { display: flex; align-items: center; gap: 10px; padding: 9px 18px; border-top: 1px solid var(--line); background: var(--surface); }
+.diff-view-status { flex: 1; color: var(--text-3); font-size: 11px; }
 .diff-view-status .count { color: var(--text); font-weight: 600; }
 .diff-view-empty { padding: 36px 22px; text-align: center; color: var(--text-2); font-size: 12px; }
 .diff-view-empty .title { display: block; margin-bottom: 6px; color: var(--text); font-size: 13px; font-weight: 600; }
@@ -756,9 +778,11 @@ pre { padding: 13px 15px; overflow-x: auto; background: var(--surface-soft); bor
 #diff-chat-input { width: 100%; min-height: 80px; padding: 10px 12px; color: var(--text); background: var(--surface-soft); border: 1px solid var(--line-strong); border-radius: 8px; font: inherit; font-size: 12.5px; line-height: 1.5; resize: vertical; }
 #diff-chat-input:focus { outline: none; border-color: var(--accent); }
 .task-rail { display: grid; gap: 8px; margin-top: 24px; min-height: 0; }
-.task-rail-heading { display: flex; align-items: center; justify-content: space-between; padding: 0 8px; }
+.task-rail-heading { display: flex; align-items: center; gap: 8px; padding: 0 8px; }
 .task-rail-heading strong { font-size: 11px; }
 .task-rail-count { min-width: 20px; padding: 1px 6px; color: var(--text-2); background: var(--surface-soft); border: 1px solid var(--line); border-radius: 999px; font-size: 10px; text-align: center; }
+.task-rail-toggle { margin-left: auto; padding: 3px 0; color: var(--text-3); background: transparent; border: 0; cursor: pointer; font-size: 10px; }
+.task-rail-toggle:hover { color: var(--text); }
 .task-list { display: grid; gap: 4px; max-height: min(42dvh, 430px); overflow: auto; }
 .task-empty { padding: 11px 8px; color: var(--text-3); font-size: 11px; line-height: 1.45; }
 .task-item { display: grid; grid-template-columns: 8px minmax(0, 1fr); gap: 8px; width: 100%; padding: 9px 8px; color: var(--text-2); background: transparent; border: 1px solid transparent; border-radius: 9px; text-align: left; cursor: pointer; transition: .2s var(--ease); }
@@ -770,6 +794,7 @@ pre { padding: 13px 15px; overflow-x: auto; background: var(--surface-soft); bor
 .task-item-dot.done { background: var(--success); }
 .task-item-dot.failed { background: var(--danger); }
 .task-item.failed { color: var(--text); background: color-mix(in srgb, var(--danger) 6%, transparent); }
+.task-item.completed { color: var(--text-3); }
 .task-item-title { overflow: hidden; font-size: 11px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .task-item-meta { display: flex; justify-content: space-between; gap: 6px; margin-top: 2px; color: var(--text-3); font-size: 9px; }
 .field { display: grid; gap: 6px; }
@@ -842,6 +867,19 @@ pre { padding: 13px 15px; overflow-x: auto; background: var(--surface-soft); bor
   .repair-inspector .repair-progress { padding: 0 16px; }
   .repair-inspector .repair-stream { padding: 18px 16px; }
   .repair-inspector .repair-controls { padding: 12px 16px 15px; }
-  .repair-actions { align-items: stretch; flex-direction: column; }
+  .repair-controls { grid-template-columns: 1fr; }
+  .repair-actions { align-items: stretch; flex-direction: column-reverse; }
   .repair-actions button { width: 100%; }
+}
+
+/* The desktop window can be resized below the comfortable two-pane width.
+   Keep the task rail usable as the entry point, then give the repair session
+   the whole window once it is opened instead of leaving its content offscreen. */
+@media (max-width: 980px) {
+  .app-shell.repair-open .sidebar { display: none; }
+  .app-shell.repair-open .workspace { width: 100%; }
+  .app-shell.repair-open .repair-inspector-header { padding-left: 18px; padding-right: 18px; }
+  .app-shell.repair-open .repair-inspector .repair-progress { padding-left: 18px; padding-right: 18px; }
+  .app-shell.repair-open .repair-inspector .repair-stream { padding-left: 18px; padding-right: 18px; }
+  .app-shell.repair-open .repair-inspector .repair-controls { padding-left: 18px; padding-right: 18px; }
 }

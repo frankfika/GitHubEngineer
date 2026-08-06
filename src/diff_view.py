@@ -84,7 +84,6 @@ def parse_unified_diff(text: str) -> dict[str, list[dict[str, Any]]]:
     current_file: dict[str, Any] | None = None
     current_hunk: dict[str, Any] | None = None
     hunk_id = 0
-    last_hunk: dict[str, Any] | None = None
 
     for raw_line in text.splitlines():
         if raw_line.startswith("diff --git "):
@@ -94,7 +93,6 @@ def parse_unified_diff(text: str) -> dict[str, list[dict[str, Any]]]:
             current_file = {"path": _extract_path_from_diff_header(raw_line), "hunks": []}
             files.append(current_file)
             current_hunk = None
-            last_hunk = None
             continue
         if raw_line.startswith("--- ") or raw_line.startswith("+++ "):
             # File-aux header. The ``+++`` line carries the canonical
@@ -121,7 +119,6 @@ def parse_unified_diff(text: str) -> dict[str, list[dict[str, Any]]]:
                 "lines": [],
             }
             current_file["hunks"].append(current_hunk)
-            last_hunk = current_hunk
             hunk_id += 1
             continue
         if current_hunk is None:
@@ -142,12 +139,6 @@ def parse_unified_diff(text: str) -> dict[str, list[dict[str, Any]]]:
             # hunk and treat the line as a new file header if it begins
             # with ``diff``.
             current_hunk = None
-
-    # Defensive: if a hunk was opened but never closed, ``last_hunk``
-    # still holds a reference. The parser above is the sole writer so
-    # the field should always be set when a hunk exists, but ``None`` is
-    # a valid no-op here.
-    _ = last_hunk
 
     return {"files": files}
 
@@ -292,16 +283,3 @@ def select_unified_diff_hunks(text: str, accepted_ids: set[int]) -> tuple[str, i
     if patch and not patch.endswith("\n"):
         patch += "\n"
     return patch, next_hunk_id, header_only_files
-
-
-def diff_text_to_unified(patch_text: str) -> str:
-    """No-op pass-through kept for symmetry with future ``patch`` sources.
-
-    The repair worker already produces unified-diff text (via
-    ``git diff``), so the HTTP layer just forwards it. This wrapper
-    exists so callers do not have to import the parser when they only
-    need a passthrough (and so a future ``git format-patch`` migration
-    has a single seam to swap).
-    """
-
-    return patch_text

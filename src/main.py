@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import html
 import json
 import os
 import re
@@ -1071,28 +1072,29 @@ def _inline_markdown_to_html(text: str) -> str:
     full Markdown parser.
     """
 
-    import html as _html
-    import re as _re
-
     parts: list[str] = []
     cursor = 0
-    pattern = _re.compile(
-        r"\[([^\]]+)\]\(([^)\s]+)\)|`([^`]+)`"
-    )
-    for match in pattern.finditer(text):
+    for match in _INLINE_MARKDOWN_PATTERN.finditer(text):
         if match.start() > cursor:
-            parts.append(_html.escape(text[cursor : match.start()]))
+            parts.append(html.escape(text[cursor : match.start()]))
         if match.group(1) is not None:
             parts.append(
-                f"<a href='{_html.escape(match.group(2), quote=True)}'>"
-                f"{_html.escape(match.group(1))}</a>"
+                f"<a href='{html.escape(match.group(2), quote=True)}'>"
+                f"{html.escape(match.group(1))}</a>"
             )
         else:
-            parts.append(f"<code>{_html.escape(match.group(3))}</code>")
+            parts.append(f"<code>{html.escape(match.group(3))}</code>")
         cursor = match.end()
     if cursor < len(text):
-        parts.append(_html.escape(text[cursor:]))
+        parts.append(html.escape(text[cursor:]))
     return "".join(parts)
+
+
+# Compiled once at module load; the brief template is matched many times
+# per render so paying the compile cost on every call was wasteful.
+_INLINE_MARKDOWN_PATTERN = re.compile(
+    r"\[([^\]]+)\]\(([^)\s]+)\)|`([^`]+)`"
+)
 
 
 def list_decisions(args: argparse.Namespace) -> int:
@@ -2762,14 +2764,17 @@ Issue：[#{issue_number} — {issue["title"]}]({issue["url"]})
                 )
             ),
             "guidance": [],
-            "message": (
-                "已排队：将在你的仓库分支创建 Draft PR。"
-                if delivery_mode == "owner_pr"
-                else "已排队：将在你的 Fork 中修复并向上游创建 Draft PR。"
-            ),
+            "message": "已加入修复队列，准备读取代码…",
             "created_at": datetime.now(timezone.utc).isoformat(),
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
+        job["progress_history"] = [
+            {
+                "status": "queued",
+                "message": job["message"],
+                "created_at": job["created_at"],
+            }
+        ]
         atomic_write_json(job_path, job)
         launch_error = _launch_repair_worker(job_path, "start")
         if launch_error:
@@ -3121,7 +3126,18 @@ Issue：[#{issue_number} — {issue["title"]}]({issue["url"]})
             mode = "publish"
         else:
             return 404, b'{"error":"unknown repair action"}', "application/json"
-        job["updated_at"] = datetime.now(timezone.utc).isoformat()
+        now_iso = datetime.now(timezone.utc).isoformat()
+        job["updated_at"] = now_iso
+        if action in {"guidance", "verify"}:
+            history = list(job.get("progress_history") or [])
+            history.append(
+                {
+                    "status": job["status"],
+                    "message": job["message"],
+                    "created_at": now_iso,
+                }
+            )
+            job["progress_history"] = history[-24:]
         atomic_write_json(path, job)
         launch_error = _launch_repair_worker(path, mode)
         if launch_error:
@@ -3541,9 +3557,6 @@ footer {{ max-width: 960px; margin: 64px auto 32px; padding: 0 24px;
         output of ``ReportGenerator.generate_markdown`` faithfully.
         """
 
-        import html
-        import re as _re
-
         out: list[str] = []
         in_code = False
         in_list = False
@@ -3604,8 +3617,6 @@ footer {{ max-width: 960px; margin: 64px auto 32px; padding: 0 24px;
         ).encode("utf-8"), "text/html; charset=utf-8"
 
     def _render_index_html_body() -> str:
-        import html
-
         briefs: list[dict[str, str]] = []
         if output_dir.exists():
             for path in sorted(output_dir.glob("*_*.md"), reverse=True):
@@ -3698,8 +3709,6 @@ footer {{ max-width: 960px; margin: 64px auto 32px; padding: 0 24px;
         )
 
     def render_brief_html(repo: str) -> tuple[int, bytes, str]:
-        import html
-
         if not output_dir.exists():
             return (
                 404,
@@ -3722,8 +3731,6 @@ footer {{ max-width: 960px; margin: 64px auto 32px; padding: 0 24px;
         return 200, render_shell(title=f"简报 · {repo}", body=body, repos=repos, active="briefs", context=repo).encode("utf-8"), "text/html; charset=utf-8"
 
     def _render_brief_html_body(path: Path) -> str:
-        import html
-
         markdown = path.read_text(encoding="utf-8")
         inner = _markdown_to_html(markdown)
         return (
@@ -3884,8 +3891,6 @@ footer {{ max-width: 960px; margin: 64px auto 32px; padding: 0 24px;
         )
 
     def render_briefs_index_html() -> tuple[int, bytes, str]:
-        import html
-
         if not output_dir.exists():
             cards = "<div class='empty-state'>还没有简报。选择仓库后即可生成第一份。</div>"
         else:
@@ -3934,8 +3939,6 @@ footer {{ max-width: 960px; margin: 64px auto 32px; padding: 0 24px;
         return 200, render_shell(title="维护简报", body=body, repos=tracked_repositories, active="briefs", context="维护简报").encode("utf-8"), "text/html; charset=utf-8"
 
     def render_decisions_html() -> tuple[int, bytes, str]:
-        import html
-
         memory = DecisionMemory.load(args.memory_path)
         status_labels = {
             "accepted": "接受",

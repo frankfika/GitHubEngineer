@@ -134,6 +134,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   longer expose the previous `*@opencsg.com` mailboxes.
 - `VERIFY.md` PyPI Trusted Publisher and origin URL examples now use
   `frankfika/GitHubEngineer`.
+- `README.md` test count badge re-aligned from 382 to 387 so the badge
+  matches the actual `pytest tests/` run on the current HEAD.
 
 ## [0.1.0] - 2026-07-21
 

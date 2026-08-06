@@ -708,8 +708,25 @@ pre { padding: 13px 15px; overflow-x: auto; background: var(--surface-soft); bor
 .repair-event.user .repair-event-card { color: var(--surface-solid); background: var(--accent); border: 0; border-radius: 13px 5px 13px 13px; }
 .repair-event-card strong { color: var(--text); }
 .repair-event.user .repair-event-card strong { color: inherit; }
+.repair-live-progress { margin-top: 13px; padding-top: 12px; border-top: 1px solid var(--line); }
+.repair-live-progress-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 9px; }
+.repair-live-progress-heading strong { font-size: 12px; }
+.repair-live-progress-heading span { color: var(--text-3); font-size: 10px; }
+.repair-progress-list { display: grid; gap: 0; }
+.repair-progress-item { position: relative; display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; gap: 9px; align-items: start; min-height: 38px; padding-bottom: 9px; }
+.repair-progress-item:last-child { min-height: 0; padding-bottom: 0; }
+.repair-progress-item:not(:last-child)::before { content: ""; position: absolute; top: 12px; bottom: 0; left: 4px; width: 1px; background: var(--line); }
+.repair-progress-dot { position: relative; z-index: 1; width: 9px; height: 9px; margin-top: 3px; border: 2px solid var(--surface-solid); border-radius: 50%; background: var(--text-3); box-shadow: 0 0 0 1px var(--line-strong); }
+.repair-progress-item.done .repair-progress-dot { background: var(--success); }
+.repair-progress-item.current .repair-progress-dot { background: var(--warning); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 16%, transparent); animation: repair-progress-pulse 1.5s ease-in-out infinite; }
+.repair-progress-item.failed .repair-progress-dot { background: var(--danger); }
+.repair-progress-copy { min-width: 0; }
+.repair-progress-copy strong { display: block; font-size: 11.5px; line-height: 1.35; }
+.repair-progress-copy span { display: block; margin-top: 2px; color: var(--text-3); font-size: 10.5px; line-height: 1.45; }
+.repair-progress-time { color: var(--text-3); font-size: 9.5px; white-space: nowrap; }
+@keyframes repair-progress-pulse { 50% { opacity: .45; transform: scale(.82); } }
 .repair-output { margin-top: 9px; padding: 9px 10px; color: var(--text-2); background: var(--surface-soft); border: 1px solid var(--line); border-radius: 8px; font: 10px/1.5 "SF Mono", ui-monospace, monospace; white-space: pre-wrap; }
-.repair-controls { display: grid; gap: 9px; padding: 13px 16px 15px; border-top: 1px solid var(--line); background: var(--surface-solid); }
+.repair-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 10px; padding: 14px 18px 18px; border-top: 1px solid var(--line); background: var(--surface-solid); }
 .repair-controls textarea { width: 100%; min-height: 52px; max-height: 110px; resize: none; padding: 10px 11px; color: var(--text); background: var(--surface-soft); border: 1px solid var(--line); border-radius: 10px; outline: 0; }
 .repair-controls textarea:focus { border-color: var(--line-strong); }
 .repair-controls textarea:disabled { opacity: .55; }
@@ -717,16 +734,21 @@ pre { padding: 13px 15px; overflow-x: auto; background: var(--surface-soft); bor
 .repair-actions .primary-button:disabled, .repair-actions .soft-button:disabled { cursor: not-allowed; opacity: .45; }
 /* diff view (CodeMirror 6) — sits inside the repair inspector and
    replaces the regular repair stream when the job is in review_ready. */
-.repair-inspector-header-actions { display: flex; gap: 8px; align-items: center; }
-.diff-view { display: grid; grid-template-rows: auto 1fr auto; min-height: 0; flex: 1; border-top: 1px solid var(--line); background: var(--surface-solid); }
+.repair-inspector-header-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; align-items: center; }
+.diff-view { display: grid; grid-template-rows: auto minmax(0, auto) minmax(180px, 1fr) auto; min-height: 0; overflow: hidden; flex: 1; border-top: 1px solid var(--line); background: var(--surface-solid); }
 .diff-view[hidden] { display: none; }
 .diff-view-meta { display: flex; align-items: center; gap: 14px; padding: 12px 18px; border-bottom: 1px solid var(--line); font-size: 11px; color: var(--text-2); flex-wrap: wrap; }
 .diff-view-meta strong { color: var(--text); font-size: 12px; font-weight: 650; }
 .diff-view-stats { color: var(--text-3); font-family: "SF Mono", ui-monospace, monospace; font-size: 10.5px; }
 .diff-view-stats .add { color: var(--success); }
 .diff-view-stats .rem { color: var(--danger); }
+.diff-view-overview { max-height: 156px; overflow: auto; border-bottom: 1px solid var(--line); }
+.diff-view-summary { margin: 0; padding: 12px 18px 5px; color: var(--text); font-size: 12px; line-height: 1.55; white-space: pre-wrap; }
 .diff-view-upgrade { margin-left: auto; padding: 4px 10px; color: var(--success); background: color-mix(in srgb, var(--success) 14%, transparent); border-radius: 999px; font-size: 10.5px; }
-.diff-view-body { display: grid; grid-template-columns: 1fr 320px; min-height: 0; overflow: hidden; }
+.diff-view-body { display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 180px; overflow: hidden; }
+.diff-view-code-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 18px; border-bottom: 1px solid var(--line); background: var(--surface-soft); }
+.diff-view-code-heading strong { font-size: 12px; }
+.diff-view-code-heading span { color: var(--text-3); font-size: 10.5px; }
 .diff-view-editor { min-width: 0; overflow: auto; }
 .diff-view-fallback-note { padding: 9px 14px; color: var(--warning); background: color-mix(in srgb, var(--warning) 9%, var(--surface)); border-bottom: 1px solid var(--line); font-size: 11px; }
 .diff-view-plain { min-width: 100%; width: max-content; min-height: calc(100% - 38px); margin: 0; padding: 14px 18px; color: var(--text-2); background: var(--surface-solid); font: 12px/1.55 "SF Mono", ui-monospace, monospace; white-space: pre; tab-size: 4; }
@@ -760,8 +782,8 @@ pre { padding: 13px 15px; overflow-x: auto; background: var(--surface-soft); bor
 .diff-hunk-card .hunk-btn-accept:hover { background: color-mix(in srgb, var(--success) 14%, var(--surface-soft)); }
 .diff-hunk-card .hunk-btn-reject { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 35%, var(--line)); }
 .diff-hunk-card .hunk-btn-reject:hover { background: color-mix(in srgb, var(--danger) 14%, var(--surface-soft)); }
-.diff-view-cta { display: flex; align-items: center; gap: 10px; padding: 12px 18px; border-top: 1px solid var(--line); background: var(--surface); flex-wrap: wrap; }
-.diff-view-status { flex: 1; color: var(--text-2); font-family: "SF Mono", ui-monospace, monospace; font-size: 11px; }
+.diff-view-cta { display: flex; align-items: center; gap: 10px; padding: 9px 18px; border-top: 1px solid var(--line); background: var(--surface); }
+.diff-view-status { flex: 1; color: var(--text-3); font-size: 11px; }
 .diff-view-status .count { color: var(--text); font-weight: 600; }
 .diff-view-empty { padding: 36px 22px; text-align: center; color: var(--text-2); font-size: 12px; }
 .diff-view-empty .title { display: block; margin-bottom: 6px; color: var(--text); font-size: 13px; font-weight: 600; }
@@ -769,9 +791,11 @@ pre { padding: 13px 15px; overflow-x: auto; background: var(--surface-soft); bor
 #diff-chat-input { width: 100%; min-height: 80px; padding: 10px 12px; color: var(--text); background: var(--surface-soft); border: 1px solid var(--line-strong); border-radius: 8px; font: inherit; font-size: 12.5px; line-height: 1.5; resize: vertical; }
 #diff-chat-input:focus { outline: none; border-color: var(--accent); }
 .task-rail { display: grid; gap: 8px; margin-top: 24px; min-height: 0; }
-.task-rail-heading { display: flex; align-items: center; justify-content: space-between; padding: 0 8px; }
+.task-rail-heading { display: flex; align-items: center; gap: 8px; padding: 0 8px; }
 .task-rail-heading strong { font-size: 11px; }
 .task-rail-count { min-width: 20px; padding: 1px 6px; color: var(--text-2); background: var(--surface-soft); border: 1px solid var(--line); border-radius: 999px; font-size: 10px; text-align: center; }
+.task-rail-toggle { margin-left: auto; padding: 3px 0; color: var(--text-3); background: transparent; border: 0; cursor: pointer; font-size: 10px; }
+.task-rail-toggle:hover { color: var(--text); }
 .task-list { display: grid; gap: 4px; max-height: min(42dvh, 430px); overflow: auto; }
 .task-empty { padding: 11px 8px; color: var(--text-3); font-size: 11px; line-height: 1.45; }
 .task-item { display: grid; grid-template-columns: 8px minmax(0, 1fr); gap: 8px; width: 100%; padding: 9px 8px; color: var(--text-2); background: transparent; border: 1px solid transparent; border-radius: 9px; text-align: left; cursor: pointer; transition: .2s var(--ease); }
@@ -783,6 +807,7 @@ pre { padding: 13px 15px; overflow-x: auto; background: var(--surface-soft); bor
 .task-item-dot.done { background: var(--success); }
 .task-item-dot.failed { background: var(--danger); }
 .task-item.failed { color: var(--text); background: color-mix(in srgb, var(--danger) 6%, transparent); }
+.task-item.completed { color: var(--text-3); }
 .task-item-title { overflow: hidden; font-size: 11px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .task-item-meta { display: flex; justify-content: space-between; gap: 6px; margin-top: 2px; color: var(--text-3); font-size: 9px; }
 .field { display: grid; gap: 6px; }
@@ -855,8 +880,21 @@ pre { padding: 13px 15px; overflow-x: auto; background: var(--surface-soft); bor
   .repair-inspector .repair-progress { padding: 0 16px; }
   .repair-inspector .repair-stream { padding: 18px 16px; }
   .repair-inspector .repair-controls { padding: 12px 16px 15px; }
-  .repair-actions { align-items: stretch; flex-direction: column; }
+  .repair-controls { grid-template-columns: 1fr; }
+  .repair-actions { align-items: stretch; flex-direction: column-reverse; }
   .repair-actions button { width: 100%; }
+}
+
+/* The desktop window can be resized below the comfortable two-pane width.
+   Keep the task rail usable as the entry point, then give the repair session
+   the whole window once it is opened instead of leaving its content offscreen. */
+@media (max-width: 980px) {
+  .app-shell.repair-open .sidebar { display: none; }
+  .app-shell.repair-open .workspace { width: 100%; }
+  .app-shell.repair-open .repair-inspector-header { padding-left: 18px; padding-right: 18px; }
+  .app-shell.repair-open .repair-inspector .repair-progress { padding-left: 18px; padding-right: 18px; }
+  .app-shell.repair-open .repair-inspector .repair-stream { padding-left: 18px; padding-right: 18px; }
+  .app-shell.repair-open .repair-inspector .repair-controls { padding-left: 18px; padding-right: 18px; }
 }
 """
 
@@ -971,11 +1009,13 @@ APP_JS = r"""
   const briefGenerateButton = qs('#brief-generate-button');
   const briefGenerateStatus = qs('#brief-generate-status');
   const diffView = qs('#diff-view');
+  const diffViewOverview = qs('.diff-view-overview');
   const diffViewEditor = qs('#diff-view-editor');
   const diffViewSidebar = qs('#diff-view-sidebar-list');
   const diffViewStatus = qs('#diff-view-status');
   const diffViewStats = qs('#diff-view-stats');
   const diffViewTitle = qs('#diff-view-title');
+  const diffViewSummary = qs('#diff-view-summary');
   const diffViewVerification = qs('#diff-view-verification');
   const diffViewUpgrade = qs('#diff-view-upgrade');
   const diffAcceptAll = qs('#diff-accept-all');
@@ -994,12 +1034,14 @@ APP_JS = r"""
   const repairDialog = qs('#repair-inspector');
   const repairTaskList = qs('#repair-task-list');
   const repairTaskCount = qs('#repair-task-count');
+  const repairTaskToggle = qs('#repair-task-toggle');
   const repairRepository = qs('#repair-repository');
   const repairTitle = qs('#repair-title');
   const repairDelivery = qs('#repair-delivery');
   const repairStream = qs('#repair-stream');
   const repairGuidanceInput = qs('#repair-guidance-input');
   const repairGuidanceSend = qs('#repair-guidance-send');
+  const repairSkipSubmit = qs('#repair-skip-submit');
   const repairPublish = qs('#repair-publish');
   const defaultOnboardingMarkup = repositoryOnboarding?.innerHTML || '';
   let pendingDecision = null;
@@ -1028,6 +1070,7 @@ APP_JS = r"""
   let connectionPollTimer = null;
   let briefGenerationTimer = null;
   let repairJobs = [];
+  let showRepairHistory = false;
   let publishGeneration = 0;
   let repairSessionGeneration = 0;
 
@@ -1083,12 +1126,42 @@ APP_JS = r"""
     return { status, detail, reason };
   };
 
+  const missingVerificationTools = (job = null) => {
+    const raw = job?.verification;
+    const commands = raw && typeof raw === 'object' && Array.isArray(raw.commands)
+      ? raw.commands
+      : [];
+    return commands.flatMap((command) => {
+      const stderr = String(command?.stderr_summary || '');
+      if (command?.exit_code !== null || !/No such file or directory/i.test(stderr)) return [];
+      const executable = String(command?.argv?.[0] || command?.display || '').trim().split(/\s+/)[0];
+      return executable ? [executable] : [];
+    }).filter((value, index, values) => values.indexOf(value) === index);
+  };
+
+  const verificationToolLabel = (tool) => ({
+    go: 'Go',
+    node: 'Node.js',
+    npm: 'npm',
+    pnpm: 'pnpm',
+    yarn: 'Yarn',
+    python: 'Python',
+  }[tool] || tool);
+
   const renderVerification = (job) => {
     const verification = repairVerification(job);
+    const missingTools = missingVerificationTools(job);
+    if (missingTools.length) {
+      const names = missingTools.map(verificationToolLabel).join('、');
+      return `<div class="repair-verification" data-status="unverified"><strong>验证环境不完整</strong><span>本机缺少 ${escapeHtml(names)}，代码改动仍可 Review；完成验证前暂不能提交。</span></div>`;
+    }
+    if (verification.status === 'unverified' && verification.reason === 'dependency_missing') {
+      return `<div class="repair-verification" data-status="unverified"><strong>验证环境不完整</strong><span>${escapeHtml(verification.detail || '项目依赖没有安装完整；代码改动仍可 Review，完成验证前暂不能提交。')}</span></div>`;
+    }
     const labels = {
       passed: ['验证通过', '已收到明确的测试/验证通过结果。'],
-      failed: ['验证失败', '测试或验证没有通过，不能创建 Draft PR。'],
-      unverified: ['未验证', '没有明确的测试结果；这不代表修复已经完成，不能创建 Draft PR。'],
+      failed: ['验证失败', '测试或验证没有通过，暂时不能提交修复。'],
+      unverified: ['等待验证', '还没有明确的测试结果，暂时不能提交修复。'],
     };
     const [title, fallback] = labels[verification.status];
     return `<div class="repair-verification" data-status="${verification.status}"><strong>${title}</strong><span>${escapeHtml(verification.detail || fallback)}</span></div>`;
@@ -1107,10 +1180,13 @@ APP_JS = r"""
     ].filter(Boolean).join('\n')).filter(Boolean).join('\n\n');
     let recovery = '';
     if (verification.status === 'failed') {
+      const missingTools = missingVerificationTools(job);
       const modules = Array.from(output.matchAll(/No module named ['"]([^'"]+)['"]/g))
         .map((match) => match[1])
         .filter((value, index, values) => values.indexOf(value) === index);
-      const dependencyHint = modules.length
+      const dependencyHint = missingTools.length
+        ? `本机没有安装 ${missingTools.map(verificationToolLabel).join('、')}，所以测试没有真正启动；这不表示代码本身失败。你仍可在下方 Review 全部改动。`
+        : modules.length
         ? `测试环境缺少依赖：${modules.join('、')}。请先在可信的项目环境中安装依赖，然后重新验证。`
         : '查看失败摘要，修复测试环境或代码后重新验证。';
       const log = output
@@ -1119,6 +1195,17 @@ APP_JS = r"""
       recovery = `<div class="verification-recovery">${escapeHtml(dependencyHint)}<div class="suggestions"><button class="suggestion primary-suggestion" type="button" data-retry-verification>重新运行验证</button></div>${log}</div>`;
     } else if (verification.status === 'unverified' && verification.reason === 'sandbox_unavailable') {
       recovery = '<div class="verification-recovery">尚未运行测试。继续前会再次确认执行不可信仓库代码的风险。<div class="suggestions"><button class="suggestion primary-suggestion" type="button" data-allow-host-verification>我理解风险，在本机运行测试</button></div></div>';
+    } else if (verification.status === 'unverified' && ['no_tests_detected', 'dependency_missing'].includes(verification.reason)) {
+      const modules = Array.from(output.matchAll(/No module named ['"]([^'"]+)['"]/g))
+        .map((match) => match[1])
+        .filter((value, index, values) => values.indexOf(value) === index);
+      const hint = verification.reason === 'dependency_missing'
+        ? `缺少项目依赖${modules.length ? `：${modules.join('、')}` : ''}。补齐可信项目环境后可以重新验证。`
+        : '当前没有识别到测试命令。更新测试配置或检测规则后可以重新检测。';
+      const log = output
+        ? `<details class="verification-log"><summary>查看验证摘要</summary><pre>${escapeHtml(output.slice(-6000))}</pre></details>`
+        : '';
+      recovery = `<div class="verification-recovery">${escapeHtml(hint)}<div class="suggestions"><button class="suggestion primary-suggestion" type="button" data-retry-verification>重新检测并验证</button></div>${log}</div>`;
     }
     return `${renderVerification(job)}${recovery}`;
   };
@@ -1126,7 +1213,7 @@ APP_JS = r"""
   const providerDataBoundary = (job = null) => {
     const provider = normalizedProviderName(job);
     if (isDemoRepair(job)) {
-      return 'fake 只生成演示数据，不会真正理解或修复仓库；演示任务禁止创建 Draft PR。';
+      return 'fake 只生成演示数据，不会真正理解或修复仓库；演示任务不能提交。';
     }
     if (provider === 'codex_cli' || provider === 'claude_cli' || provider.includes('local') || provider.includes('ollama')) {
       return '当前 Provider 在本机处理仓库内容；是否产生外部请求取决于该本地工具自身的配置。';
@@ -1354,19 +1441,19 @@ APP_JS = r"""
       let repairLabel;
       let repairSubLabel = '';
       if (repairCapabilities === null) {
-        repairLabel = '检查修复环境…';
+        repairLabel = '开始修复';
       } else if (currentCanModify && currentGithubAuthenticated) {
-        repairLabel = '在隔离目录开始修复';
-        repairSubLabel = '完成后可一键提 PR';
+        repairLabel = '开始修复';
+        repairSubLabel = '完成后可提 PR';
       } else if (currentCanModify && !currentGithubAuthenticated) {
-        repairLabel = '在隔离目录开始修复';
-        repairSubLabel = '产物留本地 · 连接后可提 PR';
+        repairLabel = '开始修复';
+        repairSubLabel = '先生成本地草稿';
       } else if (!currentCanModify && currentGithubAuthenticated) {
-        repairLabel = '在你的 Fork 开始修复';
+        repairLabel = '开始修复';
         repairSubLabel = '完成后可提 PR';
       } else {
-        repairLabel = '在隔离目录开始修复';
-        repairSubLabel = '产物留本地';
+        repairLabel = '开始修复';
+        repairSubLabel = '先生成本地草稿';
       }
       // 4 档 action 字段: 拆开 gh / coding_agent 状态, 而不是只看 repairReady.
       //   - fully ready (gh + coding_agent): data-issue-command → 直接进修复
@@ -1395,20 +1482,20 @@ APP_JS = r"""
         // 没配 coding agent — 弹配置 dialog
         repairAction = 'data-open-coding-agent-setup';
         repairTitle = ' title="先配置 Coding Agent"';
-        repairSubLabel = '点配置 Coding Agent，选择 provider + 填 key';
+        repairSubLabel = '需要先完成修复设置';
       } else if (!caHealthy || apiKeyError) {
         repairAction = 'data-open-coding-agent-setup';
         repairTitle = ' title="Coding Agent 连接失败，请检查配置"';
-        repairSubLabel = `${caLabel} 无法连接 · 检查 API key、base_url 和 model`;
+        repairSubLabel = '检查修复设置';
       } else if (!ghAuth) {
         // coding agent 已配, 但没连 gh — 弹 gh 连接
         repairAction = 'data-open-github-setup';
         repairTitle = ' title="先连接 GitHub"';
-        repairSubLabel = `${caLabel} 已就绪 · 连接 GitHub 后可提 PR`;
+        repairSubLabel = '完成后连接 GitHub 才能提 PR';
       } else {
         repairAction = 'data-open-coding-agent-setup';
         repairTitle = ' title="自动修复环境尚未就绪"';
-        repairSubLabel = '自动修复环境尚未就绪，点这里检查';
+        repairSubLabel = '需要先完成修复设置';
       }
       const sub = repairSubLabel
         ? `<span class="issue-command-sub">${escapeHtml(repairSubLabel)}</span>`
@@ -2026,18 +2113,22 @@ APP_JS = r"""
     return result;
   };
 
+  // Keep this in lock-step with repairProgressLabels so the sidebar
+  // task list and the in-session progress timeline speak the same
+  // user-facing language. "Draft PR" / "草稿" / "自动修复" were
+  // intentionally removed — see renderRepairProgress for context.
   const repairStatusLabels = {
-    queued: '修复任务已排队',
-    cloning: '正在读取代码',
-    analyzing: '正在定位问题',
-    locating: '正在定位问题',
-    coding: '正在修改代码',
-    verifying: '正在运行验证',
-    review_ready: '等待你的审核',
-    publish_queued: '已确认创建 PR',
-    publishing: '正在提交修复草稿',
+    queued: '进入修复队列',
+    cloning: '准备隔离工作区',
+    analyzing: '读取 Issue 与代码',
+    locating: '定位需要修改的位置',
+    coding: 'AI 修改代码',
+    verifying: '运行测试与验证',
+    review_ready: '整理完整改动',
+    publish_queued: '准备提交修复',
+    publishing: '正在提交修复',
     completed: '修复已提交',
-    failed: '自动修复未完成',
+    failed: '修复已停止',
   };
 
   const repairStorageKey = (repository, issueNumber) => `ghe:repair:${repository}#${issueNumber}`;
@@ -2052,15 +2143,28 @@ APP_JS = r"""
   const renderRepairTaskList = (jobs = []) => {
     repairJobs = jobs;
     if (!repairTaskList) return;
+    const historyStatuses = ['completed', 'failed'];
+    const activeJobs = jobs.filter((job) => !historyStatuses.includes(job.status));
+    const historyJobs = jobs.filter((job) => historyStatuses.includes(job.status));
     if (repairTaskCount) {
-      repairTaskCount.textContent = String(jobs.length);
-      repairTaskCount.title = `${jobs.length} 个任务，其中 ${jobs.filter((job) => !['completed', 'failed'].includes(job.status)).length} 个进行中`;
+      repairTaskCount.textContent = String(activeJobs.length || jobs.length);
+      repairTaskCount.title = `${activeJobs.length} 个进行中${historyJobs.length ? `，${historyJobs.length} 个历史任务` : ''}`;
+    }
+    if (repairTaskToggle) {
+      repairTaskToggle.hidden = !historyJobs.length;
+      repairTaskToggle.textContent = showRepairHistory ? '收起历史' : `查看历史 (${historyJobs.length})`;
+      repairTaskToggle.setAttribute('aria-expanded', String(showRepairHistory));
     }
     if (!jobs.length) {
       repairTaskList.innerHTML = '<div class="task-empty">还没有修复任务。<br>从 Issue 开始一个。</div>';
       return;
     }
-    repairTaskList.innerHTML = jobs.slice(0, 30).map((job) => {
+    const visibleJobs = (showRepairHistory ? jobs : activeJobs).slice(0, 30);
+    if (!visibleJobs.length) {
+      repairTaskList.innerHTML = '<div class="task-empty">暂无进行中的任务。<br>历史任务已收起。</div>';
+      return;
+    }
+    repairTaskList.innerHTML = visibleJobs.map((job) => {
       const selected = currentRepairJob?.id === job.id ? ' active' : '';
       const title = job.issue_title || `Issue #${job.issue_number}`;
       const status = repairStatusLabels[job.status] || job.status || '未知状态';
@@ -2085,12 +2189,14 @@ APP_JS = r"""
   const showRepairInspector = () => {
     if (!repairDialog) return;
     repairDialog.hidden = false;
+    document.querySelector('.app-shell')?.classList.add('repair-open');
     if (scroller) scroller.hidden = true;
   };
 
   const closeRepairInspector = () => {
     if (!repairDialog) return;
     repairDialog.hidden = true;
+    document.querySelector('.app-shell')?.classList.remove('repair-open');
     if (scroller) scroller.hidden = false;
     window.clearTimeout(repairPollTimer);
   };
@@ -2230,6 +2336,52 @@ APP_JS = r"""
       </div>
     </section>`;
 
+  const repairProgressLabels = {
+    queued: '进入修复队列',
+    cloning: '准备隔离工作区',
+    analyzing: '读取 Issue 与代码',
+    locating: '定位需要修改的位置',
+    coding: 'AI 修改代码',
+    verifying: '运行测试与验证',
+    review_ready: '整理完整改动',
+    publish_queued: '准备提交修复',
+    publishing: '正在提交修复',
+    completed: '修复已提交',
+    failed: '修复已停止',
+  };
+
+  const fallbackRepairProgress = (job) => {
+    const flow = ['queued', 'cloning', 'analyzing', 'coding', 'verifying', 'review_ready'];
+    const aliases = { locating: 'analyzing', publish_queued: 'review_ready', publishing: 'review_ready', completed: 'review_ready' };
+    const normalized = aliases[job?.status] || job?.status || 'queued';
+    const currentIndex = Math.max(0, flow.indexOf(normalized));
+    return flow.slice(0, currentIndex + 1).map((status, index) => ({
+      status,
+      message: index === currentIndex ? String(job?.message || '') : '',
+      created_at: index === currentIndex ? job?.updated_at : '',
+    }));
+  };
+
+  const renderRepairProgress = (job) => {
+    const history = Array.isArray(job?.progress_history)
+      ? job.progress_history.filter((item) => item && typeof item === 'object')
+      : [];
+    const entries = (history.length ? history : fallbackRepairProgress(job)).slice(-8);
+    if (!entries.length) return '';
+    const active = !['review_ready', 'completed', 'failed'].includes(job?.status);
+    const rows = entries.map((entry, index) => {
+      const status = String(entry.status || 'queued');
+      const isLast = index === entries.length - 1;
+      const state = status === 'failed' ? 'failed' : (isLast && active ? 'current' : 'done');
+      const date = entry.created_at ? new Date(entry.created_at) : null;
+      const time = date && !Number.isNaN(date.getTime())
+        ? date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+        : '';
+      return `<div class="repair-progress-item ${state}"><span class="repair-progress-dot"></span><span class="repair-progress-copy"><strong>${escapeHtml(repairProgressLabels[status] || repairStatusLabels[status] || status)}</strong>${entry.message ? `<span>${escapeHtml(entry.message)}</span>` : ''}</span>${time ? `<time class="repair-progress-time">${escapeHtml(time)}</time>` : ''}</div>`;
+    }).join('');
+    return `<div class="repair-live-progress" aria-label="实时修复过程"><div class="repair-live-progress-heading"><strong>修复过程</strong><span>${active ? '每 3 秒自动更新' : '过程记录'}</span></div><div class="repair-progress-list">${rows}</div></div>`;
+  };
+
   const renderRepairSession = (job = null) => {
     if (!repairDialog || !repairStream || !currentRepairIssue) return;
     const previousJobId = String(currentRepairJob?.id || '');
@@ -2241,9 +2393,7 @@ APP_JS = r"""
       window.clearTimeout(repairPollTimer);
       repairPublish?.removeAttribute('aria-busy');
     }
-    const destination = currentRepairMode === 'owner_pr'
-      ? '修改将先保存为草稿，确认后再提交'
-      : '先在你的副本中准备修改，确认后再提交给原仓库';
+    const destination = '先查看完整改动，满意后再决定是否提交';
     repairRepository.textContent = `${currentRepairRepository || currentRepository} · #${currentRepairIssue.number}`;
     repairTitle.textContent = currentRepairIssue.title;
     repairDelivery.textContent = destination;
@@ -2261,10 +2411,11 @@ APP_JS = r"""
       repairStream.innerHTML = repairEvent(
         'assistant',
         '修复计划',
-        `<strong>${currentCanModify ? '准备修复' : '准备贡献修复'}</strong><br>流程：读取代码 → 定位问题 → 修改代码 → 运行验证 → 等待审核。只有明确验证通过并完成代码审核后才能提交。<div class="repair-safety-note"><strong>数据边界</strong>${escapeHtml(providerDataBoundary())}</div>${demoNotice}<div class="suggestions"><button class="suggestion primary-suggestion" type="button" data-start-repair>分析并准备修复</button><a class="suggestion" href="${escapeHtml(currentRepairIssue.url)}" target="_blank" rel="noreferrer">打开 Issue</a></div>`,
+        `<strong>${currentCanModify ? '准备修复' : '准备贡献修复'}</strong><br>AI 会读取代码、完成修改并运行验证。完成后你只需要查看改动，再决定是否提交。<div class="repair-safety-note"><strong>数据边界</strong>${escapeHtml(providerDataBoundary())}</div>${demoNotice}<div class="suggestions"><button class="suggestion primary-suggestion" type="button" data-start-repair>开始修复</button><a class="suggestion" href="${escapeHtml(currentRepairIssue.url)}" target="_blank" rel="noreferrer">查看 Issue</a></div>`,
       );
       repairGuidanceInput.disabled = true;
       repairGuidanceSend.disabled = true;
+      if (repairSkipSubmit) repairSkipSubmit.hidden = true;
       repairPublish.disabled = true;
       return;
     }
@@ -2296,7 +2447,7 @@ APP_JS = r"""
       repairEvent(
         'assistant',
         repairStatusLabels[job.status] || '修复会话',
-        `<strong>${escapeHtml(repairStatusLabels[job.status] || job.status)}</strong><br>${escapeHtml(displayMessage)}${failureHelp}${renderVerification(job)}${hostVerificationCta}${isDemoRepair(job) ? '<div class="repair-safety-note"><strong>演示任务不可发布</strong>fake/demo Provider 的变更仅供体验界面，不会解锁 Draft PR。</div>' : ''}`,
+        `<strong>${escapeHtml(repairStatusLabels[job.status] || job.status)}</strong><br>${escapeHtml(displayMessage)}${renderRepairProgress(job)}${failureHelp}${renderVerification(job)}${hostVerificationCta}${isDemoRepair(job) ? '<div class="repair-safety-note"><strong>演示任务不可提交</strong>演示内容仅供体验界面，不会提交到 GitHub。</div>' : ''}`,
         '',
         job.status === 'failed' ? 'error' : '',
       ),
@@ -2316,26 +2467,26 @@ APP_JS = r"""
       events.push(repairEvent(
         'assistant',
         '修复草稿',
-        `<strong>已经提交，等待人工审核</strong><div class="suggestions"><a class="suggestion primary-suggestion" href="${escapeHtml(job.pr_url)}" target="_blank" rel="noreferrer">查看修复草稿</a></div>`,
+        `<strong>修复已经提交</strong><br>是否合并由原仓库管理员决定。<div class="suggestions"><a class="suggestion primary-suggestion" href="${escapeHtml(job.pr_url)}" target="_blank" rel="noreferrer">查看提交结果</a></div>`,
       ));
     }
     repairStream.innerHTML = events.join('');
     renderRepairTaskList(repairJobs);
-    const canGuide = job.status === 'review_ready';
-    repairGuidanceInput.disabled = !canGuide;
-    repairGuidanceSend.disabled = !canGuide;
-    // 发布还需要完成 diff 审核；loadAndRenderDiff 会在全部 hunk 已处理且
-    // 至少接受一处修改后才真正启用按钮。
+    const canRevise = job.status === 'review_ready';
+    repairGuidanceInput.disabled = !canRevise;
+    repairGuidanceSend.disabled = !canRevise;
+    if (repairSkipSubmit) repairSkipSubmit.hidden = !canRevise;
+    // diff 加载完成后，用户只需决定是否提交整份修复。
     repairPublish.disabled = true;
     const demo = isDemoRepair(job);
     repairPublish.textContent = demo
-      ? '演示任务不可发布'
+      ? '演示任务不可提交'
       : (verification.status !== 'passed'
-        ? (verification.status === 'failed' ? '验证失败，不能发布' : '未验证，不能发布')
-        : (canGuide ? '请先审核全部修改' : '确认并创建 Draft PR'));
+        ? (verification.status === 'failed' ? '修复未通过验证' : '等待验证')
+        : (canRevise ? '正在加载改动…' : '提交修复'));
     repairPublish.title = demo
-      ? 'fake/demo Provider 仅用于演示，禁止创建 Draft PR'
-      : (verification.status !== 'passed' ? '需要明确的测试或验证通过结果' : (canGuide ? '需要接受或拒绝每一处修改' : ''));
+      ? '演示内容不会提交到 GitHub'
+      : (verification.status !== 'passed' ? '需要明确的测试或验证通过结果' : '');
     repairStream.scrollTop = repairStream.scrollHeight;
     // 跑完默认弹 diff 视图 (status === review_ready).
     // 失败状态不弹 — 走结构化失败 UI, 不把用户引到空 diff 上去.
@@ -2379,8 +2530,8 @@ APP_JS = r"""
   // ===========================================================================
   // Diff view (CodeMirror 6 unified-diff renderer)
   //
-  // 当 job.status === review_ready 时, 跑完自动弹 diff 视图, 让用户逐 hunk
-  // 接受 / 拒绝 / 继续对话. 这部分照搬 dist/prototypes/diff-codemirror 的
+  // 当 job.status === review_ready 时，自动展示完整 diff，供用户检查后整份提交。
+  // 底层仍保留分段数据，用于提交前的完整性确认。代码视图沿用以下
   // 五条避坑经验:
   //
   //   1. importmap 显式 pin 所有 transitive deps (state / view / lezer / crelt /
@@ -2467,15 +2618,11 @@ APP_JS = r"""
 
   const updateDiffCtaStatus = () => {
     const activeJobId = String(currentRepairJob?.id || '');
-    const decisionWrites = activeJobId === _diffJobId ? pendingDecisionWrites(activeJobId) : 0;
     const total = Object.keys(_diffHunkStatuses).length;
-    const accepted = Object.values(_diffHunkStatuses).filter((s) => s === 'accepted').length;
-    const rejected = Object.values(_diffHunkStatuses).filter((s) => s === 'rejected').length;
-    const processed = accepted + rejected;
-    const pending = Math.max(0, total - processed);
     const demo = isDemoRepair(currentRepairJob);
     const providerSafe = providerAllowsPublishing(currentRepairJob);
     const verification = repairVerification(currentRepairJob);
+    const missingTools = missingVerificationTools(currentRepairJob);
     const canRequestHostVerification = (
       currentRepairJob?.status === 'review_ready'
       && verification.status === 'unverified'
@@ -2486,56 +2633,47 @@ APP_JS = r"""
       && providerSafe
       && verification.status === 'passed'
       && total > 0
-      && pending === 0
-      && accepted > 0
       && _diffJobId === activeJobId
-      && decisionWrites === 0
     );
     if (diffViewStatus) {
       if (total === 0) {
         diffViewStatus.textContent = '没有可提交的代码修改';
-      } else if (decisionWrites > 0) {
-        diffViewStatus.textContent = `正在保存审核结果 · ${accepted} 处接受 / ${rejected} 处拒绝`;
-      } else if (pending > 0) {
-        diffViewStatus.textContent = `${accepted} 处接受 / ${rejected} 处拒绝 / ${pending} 处待处理`;
-      } else if (accepted === 0) {
-        diffViewStatus.textContent = `已拒绝全部 ${rejected} 处修改 · 至少接受一处才能提交`;
+      } else if (verification.status !== 'passed') {
+        diffViewStatus.textContent = '以上是完整代码修改 · 验证通过后可选择提交';
       } else {
-        diffViewStatus.textContent = `审核完成 · ${accepted} 处接受 / ${rejected} 处拒绝`;
+        diffViewStatus.textContent = '以上是将要提交的完整修改 · 提交后是否合并由原仓库管理员决定';
       }
     }
     if (repairPublish) {
       repairPublish.disabled = !(readyToPublish || canRequestHostVerification);
       if (demo) {
-        repairPublish.textContent = '演示任务不可发布';
-        repairPublish.title = 'fake/demo Provider 只用于体验流程，禁止创建 Draft PR';
+        repairPublish.textContent = '演示任务不可提交';
+        repairPublish.title = '演示内容不会提交到 GitHub';
       } else if (!providerSafe) {
-        repairPublish.textContent = 'Provider 未确认，不能发布';
+        repairPublish.textContent = '当前任务不可提交';
         repairPublish.title = '任务必须记录一个明确的非演示 Provider';
       } else if (verification.status === 'failed') {
-        repairPublish.textContent = '验证失败，不能发布';
-        repairPublish.title = '修复测试或验证未通过';
+        repairPublish.textContent = missingTools.length
+          ? `缺少 ${missingTools.map(verificationToolLabel).join('、')}，暂不能提交`
+          : '修复未通过验证';
+        repairPublish.title = missingTools.length
+          ? '测试工具未安装，代码仍可 Review；完成验证后可以提交'
+          : '修复测试或验证未通过';
       } else if (canRequestHostVerification) {
         repairPublish.textContent = '在本机运行测试…';
         repairPublish.title = '将先确认风险，再执行仓库里的测试代码';
       } else if (verification.status !== 'passed') {
-        repairPublish.textContent = '未验证，不能发布';
+        repairPublish.textContent = '等待验证';
         repairPublish.title = '需要明确的测试或验证通过结果';
       } else if (total === 0) {
         repairPublish.textContent = '没有可提交的修改';
         repairPublish.title = '当前任务没有生成代码差异';
-      } else if (decisionWrites > 0) {
-        repairPublish.textContent = '正在保存审核结果…';
-        repairPublish.title = '审核结果保存完成后即可提交';
-      } else if (pending > 0) {
-        repairPublish.textContent = `还有 ${pending} 处修改待审核`;
-        repairPublish.title = '请接受或拒绝每一处修改';
-      } else if (accepted === 0) {
-        repairPublish.textContent = '至少接受一处修改';
-        repairPublish.title = '全部拒绝时没有内容可以提交';
+      } else if (!currentGithubAuthenticated) {
+        repairPublish.textContent = '连接 GitHub 后提交';
+        repairPublish.title = '点击连接 GitHub，然后提交这份完整修复';
       } else {
-        repairPublish.textContent = '确认并创建 Draft PR';
-        repairPublish.title = '创建 Draft PR；仍可在 GitHub 上继续审核';
+        repairPublish.textContent = '提交修复';
+        repairPublish.title = '提交这份完整修复；是否合并由原仓库管理员决定';
       }
     }
   };
@@ -2603,6 +2741,24 @@ APP_JS = r"""
           updateDiffCtaStatus();
         }
       });
+    }
+  };
+
+  const confirmFullDiffForSubmission = async (jobId) => {
+    const hunks = (_diffData?.files || []).flatMap((file) => file.hunks || []);
+    if (!hunks.length || _diffJobId !== jobId) {
+      throw new Error('当前没有可提交的修改');
+    }
+    // “提交修复”代表提交当前看到的整份 patch。后端仍记录完整确认，
+    // 但不再让用户逐段维护接受/拒绝状态。
+    for (const hunk of hunks) {
+      if (_diffHunkStatuses[hunk.id] === 'accepted') continue;
+      await fetchJson(`/api/repairs/${encodeURIComponent(jobId)}/hunk-decision`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hunk_id: String(hunk.id), decision: 'accepted' }),
+      });
+      _diffHunkStatuses[hunk.id] = 'accepted';
     }
   };
 
@@ -2724,7 +2880,7 @@ APP_JS = r"""
         _diffEditorView.destroy();
         _diffEditorView = null;
       }
-      diffViewEditor.innerHTML = `<div class="diff-view-fallback-note" role="status">增强代码视图暂时不可用，已切换到离线纯文本审核。</div><pre class="diff-view-plain">${escapeHtml(doc)}</pre>`;
+      diffViewEditor.innerHTML = `<div class="diff-view-fallback-note" role="status">增强代码视图暂时不可用，已显示离线文本改动。</div><pre class="diff-view-plain">${escapeHtml(doc)}</pre>`;
       return true;
     }
     if (!isCurrentRequest() || !mod || !diffViewEditor) return false;
@@ -2774,7 +2930,11 @@ APP_JS = r"""
     if (!diffView) return;
     const jobId = String(job?.id || '');
     if (!jobId) return;
+    if (diffViewOverview) diffViewOverview.scrollTop = 0;
     if (diffViewVerification) diffViewVerification.innerHTML = renderDiffVerification(job);
+    if (diffViewSummary) {
+      diffViewSummary.textContent = job.agent_summary || 'AI 已完成修改。下面是将要提交的完整代码改动。';
+    }
     _diffLoadController?.abort();
     const controller = new AbortController();
     _diffLoadController = controller;
@@ -2808,9 +2968,9 @@ APP_JS = r"""
       }
       const totalHunks = allHunks.length;
       const summary = diff.summary || { files: 0, hunks: 0, adds: 0, rems: 0 };
-      if (diffViewTitle) diffViewTitle.textContent = `${diff.repository || currentRepairRepository || ''} · ${totalHunks} hunks`;
+      if (diffViewTitle) diffViewTitle.textContent = '修复内容';
       if (diffViewStats) {
-        diffViewStats.innerHTML = `<span>${summary.files} files</span> · <span>${totalHunks} hunks</span> · <span class="add">+${summary.adds}</span> <span class="rem">−${summary.rems}</span>`;
+        diffViewStats.innerHTML = `<span>${summary.files} 个文件</span> · <span class="add">新增 ${summary.adds}</span> · <span class="rem">删除 ${summary.rems}</span>`;
       }
       // 空 diff: 显示空态, 不强行让 CodeMirror 渲染 0 行
       if (totalHunks === 0) {
@@ -2822,7 +2982,7 @@ APP_JS = r"""
         const emptyTitle = workspaceMissing ? '历史任务的工作区已经不存在' : '这次没有生成代码修改';
         const emptyDetail = workspaceMissing
           ? '本地工作区或修复产物已被清理，无法恢复 diff。请从 Issue 重新发起分析。'
-          : '没有可审核、可验证或可提交的 diff。这不代表 Issue 已经修复，请调整指令后重新运行。';
+          : '没有可查看或可提交的代码改动。这不代表 Issue 已经修复，请调整说明后重新运行。';
         if (diffViewEditor) diffViewEditor.innerHTML = `<div class="diff-view-empty"><span class="title">${emptyTitle}</span><span>${emptyDetail}</span></div>`;
         if (diffViewSidebar) diffViewSidebar.innerHTML = '';
         _diffEditorView = null;
@@ -3637,6 +3797,11 @@ APP_JS = r"""
       }
       return;
     }
+    if (event.target.closest('[data-toggle-repair-history]')) {
+      showRepairHistory = !showRepairHistory;
+      renderRepairTaskList(repairJobs);
+      return;
+    }
     const repairTaskButton = event.target.closest('[data-repair-job]');
     if (repairTaskButton) {
       const job = repairJobs.find((item) => item.id === repairTaskButton.dataset.repairJob);
@@ -3858,7 +4023,7 @@ APP_JS = r"""
           sessionGeneration === repairSessionGeneration
           && String(currentRepairJob?.id || '') === jobId
         ) {
-          repairGuidanceSend.textContent = '发送指导';
+          repairGuidanceSend.textContent = '让 AI 调整';
           if (currentRepairJob?.status === 'review_ready') repairGuidanceSend.disabled = false;
         }
       }
@@ -3906,28 +4071,22 @@ APP_JS = r"""
       if (!providerAllowsPublishing(currentRepairJob)) {
         updateDiffCtaStatus();
         showToast(isDemoRepair(currentRepairJob)
-          ? '演示模式禁止创建 Draft PR'
-          : '任务 Provider 未确认，为安全起见不能发布');
+          ? '演示内容不能提交到 GitHub'
+          : '当前任务来源未确认，暂时不能提交');
         return;
       }
       if (repairVerification(currentRepairJob).status !== 'passed') {
         updateDiffCtaStatus();
-        showToast('需要明确的测试或验证通过结果后才能发布');
+        showToast('修复通过测试或验证后才能提交');
         return;
       }
-      const decisions = Object.values(_diffHunkStatuses);
-      const accepted = decisions.filter((status) => status === 'accepted').length;
-      const reviewComplete = (
-        _diffData
-        && _diffJobId === jobId
-        && decisions.length > 0
-        && decisions.every((status) => status === 'accepted' || status === 'rejected')
-        && accepted > 0
-        && pendingDecisionWrites(jobId) === 0
-      );
-      if (!reviewComplete) {
+      if (!currentGithubAuthenticated) {
+        if (githubSetupDialog) githubSetupDialog.showModal();
+        return;
+      }
+      if (!_diffData || _diffJobId !== jobId || !Object.keys(_diffHunkStatuses).length) {
         updateDiffCtaStatus();
-        showToast('请先审核全部修改，并至少接受一处');
+        showToast('完整改动还没有加载完成，请稍后再试');
         return;
       }
       const generation = ++publishGeneration;
@@ -3939,6 +4098,8 @@ APP_JS = r"""
       repairPublish.setAttribute('aria-busy', 'true');
       repairPublish.textContent = '正在准备提交…';
       try {
+        await confirmFullDiffForSubmission(jobId);
+        if (!isCurrentPublish()) return;
         const confirmation = await fetchJson(
           `/api/repairs/${encodeURIComponent(jobId)}/confirm-token`,
         );
@@ -3958,10 +4119,10 @@ APP_JS = r"""
         if (!isCurrentPublish()) return;
         renderRepairSession(result);
         pollRepairJob(result.id);
-        showToast('已确认，正在创建 Draft PR');
+        showToast('修复已提交，等待仓库管理员处理');
       } catch (error) {
         if (!isCurrentPublish()) return;
-        showToast(error.message || 'Draft PR 提交失败，请重试');
+        showToast(error.message || '修复提交失败，请重试');
         updateDiffCtaStatus();
       } finally {
         if (isCurrentPublish()) repairPublish.removeAttribute('aria-busy');
@@ -4054,7 +4215,7 @@ def render_shell(
         )
 
     repo_items = "".join(
-        '<a class="repo-pill" href="/ui/brief/{repo}">'
+        '<a class="repo-pill" href="/ui/brief/{repo}" data-select-repo="{repo}">'
         '<span class="repo-dot"></span><span class="repo-name">{label}</span></a>'.format(
             repo=escape(repo, quote=True), label=escape(repo)
         )
@@ -4099,7 +4260,7 @@ def render_shell(
       {nav_item('decisions', '/ui/decisions', '决策')}
     </nav>
     <section class="task-rail" aria-labelledby="task-rail-title">
-      <div class="task-rail-heading"><strong id="task-rail-title">修复任务</strong><span class="task-rail-count" id="repair-task-count">0</span></div>
+      <div class="task-rail-heading"><strong id="task-rail-title">需要处理</strong><span class="task-rail-count" id="repair-task-count">0</span><button class="task-rail-toggle" id="repair-task-toggle" type="button" data-toggle-repair-history hidden aria-expanded="false">查看历史</button></div>
       <div class="task-list" id="repair-task-list"><div class="task-empty">还没有修复任务。<br>从 Issue 开始一个。</div></div>
     </section>
     <div class="sidebar-footer"><span class="online">本地服务在线</span></div>
@@ -4113,6 +4274,47 @@ def render_shell(
       <div class="topbar-status">GitHub Engineer v1.0</div>
     </header>
     <div class="workspace-scroll">{body}</div>
+    <section class="repair-inspector" id="repair-inspector" hidden aria-label="修复任务详情">
+      <div class="repair-inspector-header">
+        <div><div class="repair-inspector-kicker" id="repair-repository">修复会话</div><h2 id="repair-title">Issue 修复</h2><p id="repair-delivery"></p></div>
+        <div class="repair-inspector-header-actions">
+          <button class="soft-button" type="button" data-close-repair>关闭</button>
+        </div>
+      </div>
+      <div class="repair-progress" aria-label="修复进度">
+        <span data-repair-phase="read">读取代码</span>
+        <span data-repair-phase="locate">定位</span>
+        <span data-repair-phase="modify">修改</span>
+        <span data-repair-phase="verify">验证</span>
+        <span data-repair-phase="review">查看改动</span>
+      </div>
+      <div class="repair-stream" id="repair-stream" aria-live="polite"></div>
+      <section class="diff-view" id="diff-view" hidden aria-label="代码修改预览">
+        <div class="diff-view-meta">
+          <strong id="diff-view-title">代码修改</strong>
+          <span class="diff-view-stats" id="diff-view-stats">正在加载…</span>
+        </div>
+        <div class="diff-view-overview">
+          <div class="diff-view-verification" id="diff-view-verification" aria-live="polite"></div>
+          <p class="diff-view-summary" id="diff-view-summary">正在整理修复说明…</p>
+        </div>
+        <div class="diff-view-body">
+          <div class="diff-view-code-heading"><strong>代码改动</strong><span>滚动查看全部文件</span></div>
+          <div class="diff-view-editor" id="diff-view-editor"></div>
+        </div>
+        <footer class="diff-view-cta">
+          <span class="diff-view-status" id="diff-view-status">正在加载完整改动…</span>
+        </footer>
+      </section>
+      <div class="repair-controls">
+        <textarea id="repair-guidance-input" rows="2" aria-label="告诉 AI 需要调整的地方" placeholder="需要调整？直接告诉 AI（可选）" disabled></textarea>
+        <div class="repair-actions">
+          <button class="soft-button" id="repair-guidance-send" type="button" disabled>让 AI 调整</button>
+          <button class="soft-button" id="repair-skip-submit" type="button" data-close-repair hidden>暂不提交</button>
+          <button class="primary-button" id="repair-publish" type="button" disabled>提交修复</button>
+        </div>
+      </div>
+    </section>
   </main>
 </div>
 <dialog class="dialog" id="decision-dialog">
@@ -4263,76 +4465,12 @@ def render_shell(
         </div>
       </div>
       <p class="github-setup-note" id="coding-agent-data-boundary">API Provider 会接收 Issue 内容与为定位问题选取的仓库源码片段。请确认仓库数据允许发送给该模型服务。</p>
-      <p class="github-setup-note">修复在隔离目录运行，不会自动提交；只有验证通过并经你审核后才允许发布。</p>
+      <p class="github-setup-note">修复在隔离目录运行，不会自动提交；验证完成后，你可以查看完整改动再决定是否提交。</p>
       <div class="dialog-actions">
         <button class="soft-button" type="button" data-close-coding-agent-setup>取消</button>
         <button class="primary-button" type="button" id="coding-agent-save" data-coding-agent-save>下一步</button>
       </div>
     </form>
-  </div>
-</dialog>
-<section class="repair-inspector" id="repair-inspector" hidden aria-label="修复任务详情">
-  <div class="repair-inspector-header">
-    <div><div class="repair-inspector-kicker" id="repair-repository">修复会话</div><h2 id="repair-title">Issue 修复</h2><p id="repair-delivery"></p></div>
-    <div class="repair-inspector-header-actions">
-      <button class="soft-button" type="button" id="diff-open-vscode" hidden>在 VS Code 打开产物</button>
-      <button class="soft-button" type="button" id="diff-connect-github" data-open-github-setup>连接 GitHub</button>
-      <button class="soft-button" type="button" data-close-repair>返回对话</button>
-    </div>
-  </div>
-  <div class="repair-progress" aria-label="修复进度">
-    <span data-repair-phase="read">读取代码</span>
-    <span data-repair-phase="locate">定位</span>
-    <span data-repair-phase="modify">修改</span>
-    <span data-repair-phase="verify">验证</span>
-    <span data-repair-phase="review">审核</span>
-  </div>
-  <div class="repair-stream" id="repair-stream" aria-live="polite"></div>
-  <section class="diff-view" id="diff-view" hidden aria-label="代码修改预览">
-    <div class="diff-view-meta">
-      <strong id="diff-view-title">代码修改</strong>
-      <span class="diff-view-stats" id="diff-view-stats">正在加载…</span>
-      <span class="diff-view-upgrade" id="diff-view-upgrade" hidden>已升级到完整模式 · 之前接受的 hunk 已保留</span>
-    </div>
-    <div class="diff-view-verification" id="diff-view-verification" aria-live="polite"></div>
-    <div class="diff-view-body">
-      <div class="diff-view-editor" id="diff-view-editor"></div>
-      <aside class="diff-view-sidebar" id="diff-view-sidebar">
-        <h3 class="diff-view-sidebar-title">Hunks</h3>
-        <div id="diff-view-sidebar-list"></div>
-      </aside>
-    </div>
-    <footer class="diff-view-cta">
-      <span class="diff-view-status" id="diff-view-status">就绪 · 0/0 hunks 已处理</span>
-      <button class="soft-button" type="button" id="diff-accept-all">接受全部</button>
-      <button class="soft-button" type="button" id="diff-reject-all">拒绝全部</button>
-      <button class="primary-button" type="button" id="diff-continue-chat">继续对话</button>
-    </footer>
-  </section>
-  <div class="repair-controls">
-    <textarea id="repair-guidance-input" rows="2" placeholder="代码完成后，可以继续给 AI 指导…" disabled></textarea>
-    <div class="repair-actions">
-      <button class="soft-button" id="repair-guidance-send" type="button" disabled>发送指导</button>
-      <button class="primary-button" id="repair-publish" type="button" disabled>确认并提交修复草稿</button>
-    </div>
-  </div>
-</section>
-<dialog class="dialog" id="diff-chat-dialog">
-  <div class="dialog-header">
-    <div><h2>继续与 GitHubEngineer 对话</h2><p>你的指导会作为下一步修订（<code>--revise</code>）的输入。</p></div>
-    <button class="icon-button" type="button" data-close-diff-chat>×</button>
-  </div>
-  <div class="dialog-body">
-    <textarea id="diff-chat-input" rows="4" placeholder="例如：把退避改短一点；给错误日志加上 issue 号…"></textarea>
-    <div class="diff-chat-suggestions">
-      <button class="soft-button" type="button" data-diff-suggestion="再优化一下错误处理">再优化一下错误处理</button>
-      <button class="soft-button" type="button" data-diff-suggestion="retry 改成 5 次">retry 改成 5 次</button>
-      <button class="soft-button" type="button" data-diff-suggestion="补一个单元测试">补一个单元测试</button>
-    </div>
-  </div>
-  <div class="dialog-actions">
-    <button class="soft-button" type="button" data-close-diff-chat>取消</button>
-    <button class="primary-button" type="button" id="diff-chat-send">发送 → 修订</button>
   </div>
 </dialog>
 <script src="/ui/app.js" defer></script>
