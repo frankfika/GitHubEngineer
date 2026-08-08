@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Issue repair: complete v1.0 「整份提交」清理.** `desktop/ui/app.js` 和
+  `src/web_ui.py` 之前仍渲染逐 hunk accept/reject 按钮、监听 `data-hunk-action`
+  事件、提供 `Alt+Shift+A/R` 快捷键，并把 `setHunkStatus` 暴露给 UI
+  操作；这些跟 `9a3df54` 设计的 "整份 diff 决策" 不一致，会让用户以为
+  可以逐段拒绝，实际后端 `validate_repair_review` 不区分单段拒绝与全接受。
+  现在：
+  - `renderDiffSidebar` 不再渲染 hunk 按钮和 status badge，sidebar 只读
+    显示 hunk 位置 + 文件 + 行数（点击跳转）。
+  - 删除 `data-diff-accept-all` / `data-diff-reject-all` /
+    `[data-hunk-action]` 事件处理、`Alt+Shift+A/R` 快捷键、
+    `diffAcceptAll` / `diffRejectAll` 元素引用。
+  - 删除 `.hunk-btn-accept` / `.hunk-btn-reject` 样式与
+    `.diff-hunk-card-actions` / `.diff-hunk-card-status*` 状态色。
+  - `confirmFullDiffForSubmission` 串行写后端 hunk-decision，发布前
+    单段失败会回滚状态；删了 `setHunkStatus` / `_decisionPendingByJob` /
+    `pendingDecisionWrites`，只保留 `_decisionWriteTail` 和
+    `_decisionVersions`（race-guard 契约）。
+  - 升级路径 toast 文案 "之前接受的 X 个 hunk 已保留" 改成
+    "完整 diff 已保留"。
+  - 新增 `test_v10_full_diff_submission_happy_path` 端到端测试：seed
+    review-ready job，模拟前端 v1.0 整份提交 (diff → 串行 hunk-decision
+    → confirm-token → publish)，验证每段 accepted 落盘 + publish
+    走到 publish_queued。
+  - 测试 388/388 通过（之前 387/387）。
+
 ## [1.0.0] - 2026-08-05
 
 > **Note.** The v1.0.0 git tag was first cut at `f948c6f` (audit-round-5,

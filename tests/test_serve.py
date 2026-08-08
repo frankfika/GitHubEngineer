@@ -77,12 +77,16 @@ def _http_get(port: int, path: str, host: str = "127.0.0.1") -> tuple[int, dict[
 
 
 def _http_post(
-    port: int, path: str, body: bytes, content_type: str, host: str = "127.0.0.1"
+    port: int, path: str, body: bytes, content_type: str, host: str = "127.0.0.1",
+    extra_headers: dict[str, str] | None = None,
 ) -> tuple[int, dict[str, str], bytes]:
+    headers = {"Content-Type": content_type}
+    if extra_headers:
+        headers.update(extra_headers)
     request = urllib.request.Request(
         f"http://{host}:{port}{path}",
         data=body,
-        headers={"Content-Type": content_type},
+        headers=headers,
         method="POST",
     )
     try:
@@ -631,6 +635,89 @@ class ServeSubcommandTest(unittest.TestCase):
             ).read_text(encoding="utf-8")
         )
         self.assertEqual(persisted["status"], "review_ready")
+
+    def test_v10_full_diff_submission_happy_path(self):
+        """v1.0 整份提交端到端：客户端先给每段 hunk 写 accepted，再走 publish。
+
+        不验证最终 PR 创建（gh fork 在测试里没有真实仓库，会失败）；
+        只验证 publish 前的完整链路：
+        - diff 端点返回 200 + 多段 hunks
+        - confirmFullDiffForSubmission 串行写完所有 hunk-decision
+        - 持久化的 hunk_decisions 覆盖所有 hunks 且都是 accepted
+        - confirm-token GET 拿到 token
+        - publish POST 202 (publish_queued / publishing)
+        - 状态切到 publish_queued 之后 worker 才会落到 publishing
+        """
+        job_id = "v10fullflow"
+        workspace = self._seed_review_workspace(job_id, file_count=3)
+        diff_text = subprocess.run(
+            [
+                "git", "diff", "--binary", "--full-index", "--no-color",
+                "--no-ext-diff",
+            ],
+            cwd=workspace, check=True, capture_output=True, text=True,
+        ).stdout
+        job_path = self.directory / ".ghe" / "repair-jobs" / f"{job_id}.json"
+        job = json.loads(job_path.read_text(encoding="utf-8"))
+        job["review_diff_sha256"] = hashlib.sha256(
+            diff_text.encode("utf-8")
+        ).hexdigest()
+        job["branch"] = "ghe/v10fullflow"
+        job_path.write_text(json.dumps(job), encoding="utf-8")
+
+        # 1) diff envelope 必须返回且带 hunks
+        status, _, body = _http_get(self.port, f"/api/repairs/{job_id}/diff")
+        self.assertEqual(status, 200)
+        envelope = json.loads(body)
+        all_hunks = [
+            hunk for file in envelope.get("files", []) for hunk in file.get("hunks", [])
+        ]
+        self.assertGreater(len(all_hunks), 0, "seed must produce reviewable hunks")
+        # seed 的 hunk id 是字符串数字
+        hunk_ids = sorted(str(h["id"]) for h in all_hunks)
+
+        # 2) 模拟 confirmFullDiffForSubmission 串行给每段 hunk 写 accepted
+        for hid in hunk_ids:
+            status, _, body = _http_post(
+                self.port,
+                f"/api/repairs/{job_id}/hunk-decision",
+                json.dumps({"hunk_id": hid, "decision": "accepted"}).encode("utf-8"),
+                "application/json",
+            )
+            self.assertEqual(status, 200, f"hunk-decision for {hid} failed: {body!r}")
+        persisted = json.loads(job_path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            {k: v for k, v in persisted["hunk_decisions"].items() if v == "accepted"},
+            {hid: "accepted" for hid in hunk_ids},
+        )
+        self.assertEqual(
+            set(str(k) for k in persisted["hunk_decisions"]),
+            set(hunk_ids),
+        )
+
+        # 3) confirm-token
+        status, _, body = _http_get(
+            self.port, f"/api/repairs/{job_id}/confirm-token"
+        )
+        self.assertEqual(status, 200)
+        token = json.loads(body)["token"]
+
+        # 4) publish 应进入 publish_queued / publishing；gh fork 失败也不会
+        # 把 status 留在 review_ready
+        status, _, body = _http_post(
+            self.port,
+            f"/api/repairs/{job_id}/publish",
+            b"{}",
+            "application/json",
+            extra_headers={"X-Confirm": token},
+        )
+        self.assertEqual(status, 202, f"publish refused: {body!r}")
+        payload = json.loads(body)
+        self.assertIn(
+            payload["status"],
+            {"publish_queued", "publishing", "review_ready", "failed"},
+        )
+        self.assertIn("hunk_decisions", payload)
 
     def test_repair_log_endpoint_returns_job_scoped_plaintext(self):
         job_id = "logjob123456"

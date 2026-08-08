@@ -117,8 +117,6 @@
   const diffViewSummary = qs('#diff-view-summary');
   const diffViewVerification = qs('#diff-view-verification');
   const diffViewUpgrade = qs('#diff-view-upgrade');
-  const diffAcceptAll = qs('#diff-accept-all');
-  const diffRejectAll = qs('#diff-reject-all');
   const diffContinueChat = qs('#diff-continue-chat');
   const diffOpenVscode = qs('#diff-open-vscode');
   const diffConnectGithub = qs('#diff-connect-github');
@@ -1647,17 +1645,17 @@
   let _diffViewModule = null;  // { EditorView, EditorState, lineNumbers, highlightActiveLine, highlightActiveLineGutter, Decoration, StateEffect, RangeSetBuilder, StateField }
   let _diffEditorView = null;
   let _diffData = null;        // 当前展示的 diff envelope (从 /api/repairs/<id>/diff)
-  let _diffHunkStatuses = {};  // {<gid>: "pending"|"accepted"|"rejected"}
+  let _diffHunkStatuses = {};  // {<gid>: "pending"|"accepted"|"rejected"} —— v1.0 整份提交时只会出现 "accepted"
   let _diffActiveHunkId = null;
   let _diffPaintTimer = null;
   let _diffLoadGeneration = 0;
   let _diffLoadController = null;
   let _diffJobId = '';
   let _decisionWriteTail = Promise.resolve();
+  // _decisionVersions: hunk-decision 写入的版本号。v1.0 整份提交下，串行
+  // await _decisionWriteTail 已经保证按顺序落盘；保留这张 map 是为了在
+  // UI 未来加回单段操作时不破坏现有 race-guard 契约。
   const _decisionVersions = new Map();
-  const _decisionPendingByJob = new Map();
-
-  const pendingDecisionWrites = (jobId) => Number(_decisionPendingByJob.get(jobId) || 0);
 
   const cancelDiffLoad = (nextJobId = '') => {
     _diffLoadGeneration += 1;
@@ -1777,87 +1775,35 @@
     }
   };
 
-  const setHunkStatus = (hunkId, status) => {
-    const jobId = String(currentRepairJob?.id || '');
-    if (!jobId || _diffJobId !== jobId || !_diffData) return;
-    const prev = _diffHunkStatuses[hunkId];
-    if (prev === status) return;
-    _diffHunkStatuses[hunkId] = status;
-    const hunk = (_diffData.files || []).flatMap((f) => f.hunks).find((x) => x.id === hunkId);
-    if (!hunk) return;
-    // sidebar card update
-    const card = diffViewSidebar?.querySelector(`.diff-hunk-card[data-hunk-id="${hunkId}"]`);
-    if (card) {
-      card.classList.toggle('accepted', status === 'accepted');
-      card.classList.toggle('rejected', status === 'rejected');
-      const statusEl = card.querySelector('.diff-hunk-card-status');
-      if (statusEl) {
-        statusEl.className = `diff-hunk-card-status diff-hunk-card-status-${status}`;
-        statusEl.textContent = status === 'pending' ? '待处理' : (status === 'accepted' ? '✓ 已接受' : '✕ 已拒绝');
-      }
-    }
-    // editor hunk-line update
-    if (_diffEditorView) {
-      const lines = _diffEditorView.contentDOM.querySelectorAll('.cm-line.diff-hunk');
-      for (const el of lines) {
-        const text = el.textContent || '';
-        const m = text.match(/@@\s*-\d+[^@]*@@/);
-        if (m && m[0] === hunk.header) {
-          el.classList.remove('diff-hunk-pending', 'diff-hunk-accepted', 'diff-hunk-rejected');
-          el.classList.add('diff-hunk-' + status);
-        }
-      }
-    }
-    updateDiffCtaStatus();
-    // 写回后端. 即使中途用户连接 GitHub, 之前的 decision 也保留.
-    if (currentRepairJob) {
-      const key = `${jobId}:${hunkId}`;
-      const version = Number(_decisionVersions.get(key) || 0) + 1;
-      _decisionVersions.set(key, version);
-      _decisionPendingByJob.set(jobId, pendingDecisionWrites(jobId) + 1);
-      updateDiffCtaStatus();
-      const write = _decisionWriteTail
-        .catch(() => {})
-        .then(() => fetchJson(`/api/repairs/${encodeURIComponent(jobId)}/hunk-decision`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ hunk_id: String(hunkId), decision: status }),
-      }));
-      // 所有 hunk 共用一条队列，accept/reject all 也按顺序写回，避免并发
-      // 请求在后端乱序落盘。
-      _decisionWriteTail = write.catch(() => {});
-      write.catch((error) => {
-        const isLatest = _decisionVersions.get(key) === version;
-        const isActiveJob = _diffJobId === jobId && String(currentRepairJob?.id || '') === jobId;
-        if (isLatest && isActiveJob && _diffHunkStatuses[hunkId] === status) {
-          _diffHunkStatuses[hunkId] = prev || 'pending';
-          showToast(`审核结果保存失败：${error.message || '请重试'}`);
-        }
-      }).finally(() => {
-        _decisionPendingByJob.set(jobId, Math.max(0, pendingDecisionWrites(jobId) - 1));
-        if (_diffJobId === jobId && String(currentRepairJob?.id || '') === jobId) {
-          renderDiffSidebar();
-          updateDiffCtaStatus();
-        }
-      });
-    }
-  };
-
   const confirmFullDiffForSubmission = async (jobId) => {
     const hunks = (_diffData?.files || []).flatMap((file) => file.hunks || []);
     if (!hunks.length || _diffJobId !== jobId) {
       throw new Error('当前没有可提交的修改');
     }
-    // “提交修复”代表提交当前看到的整份 patch。后端仍记录完整确认，
-    // 但不再让用户逐段维护接受/拒绝状态。
+    // v1.0 整份提交：把整份 patch 标 accepted。后端 hunk-decision 端点保留
+    // 作为 publish 前 integrity check 的实现细节，UI 不再让用户做逐段决策。
+    // 串行 await _decisionWriteTail 保证后端按顺序落盘。
     for (const hunk of hunks) {
       if (_diffHunkStatuses[hunk.id] === 'accepted') continue;
-      await fetchJson(`/api/repairs/${encodeURIComponent(jobId)}/hunk-decision`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ hunk_id: String(hunk.id), decision: 'accepted' }),
-      });
       _diffHunkStatuses[hunk.id] = 'accepted';
+      const write = _decisionWriteTail
+        .catch(() => {})
+        .then(() => fetchJson(`/api/repairs/${encodeURIComponent(jobId)}/hunk-decision`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ hunk_id: String(hunk.id), decision: 'accepted' }),
+        }));
+      _decisionWriteTail = write.catch(() => {});
+      try {
+        await write;
+      } catch (error) {
+        // 单段失败：把状态回滚到 pending，让用户在 review view 看到问题
+        if (_diffJobId === jobId && String(currentRepairJob?.id || '') === jobId) {
+          _diffHunkStatuses[hunk.id] = 'pending';
+          updateDiffCtaStatus();
+        }
+        throw error;
+      }
     }
   };
 
@@ -1870,21 +1816,16 @@
       diffViewSidebar.innerHTML = '<div class="diff-view-empty"><span class="title">没有生成代码修改</span><span>没有可审核或可提交的 diff；这不代表 Issue 已经修复。</span></div>';
       return;
     }
-    diffViewSidebar.innerHTML = hunks.map((h) => {
-      const status = _diffHunkStatuses[h.id] || 'pending';
-      return `<div class="diff-hunk-card" data-hunk-id="${h.id}" data-hunk-header="${escapeHtml(h.header)}">
+    // v1.0 全量提交：sidebar 只读 hunk 位置 + 行数，点击跳转，不暴露接受/拒绝按钮
+    diffViewSidebar.innerHTML = hunks.map((h) => `
+      <div class="diff-hunk-card" data-hunk-id="${h.id}" data-hunk-header="${escapeHtml(h.header)}">
         <div class="diff-hunk-card-header">
           <span>${escapeHtml(h.header)}</span>
-          <span class="diff-hunk-card-status diff-hunk-card-status-${status}">${status === 'pending' ? '待处理' : (status === 'accepted' ? '✓ 已接受' : '✕ 已拒绝')}</span>
         </div>
         <div class="diff-hunk-card-file">${escapeHtml(h.filePath)}</div>
         <div class="diff-hunk-card-stats"><span class="add">+${h.adds}</span><span class="rem">−${h.rems}</span></div>
-        <div class="diff-hunk-card-actions">
-          <button class="hunk-btn hunk-btn-accept" type="button" data-hunk-action="accept" data-hunk-id="${h.id}">接受</button>
-          <button class="hunk-btn hunk-btn-reject" type="button" data-hunk-action="reject" data-hunk-id="${h.id}">拒绝</button>
-        </div>
-      </div>`;
-    }).join('');
+      </div>
+    `).join('');
   };
 
   // 直接 walk cm-line, 不挂 StateField (坑 #2 避坑).
@@ -2203,13 +2144,7 @@
     if (tag === 'TEXTAREA' || tag === 'INPUT') return;
     if (!event.altKey || !event.shiftKey || event.metaKey || event.ctrlKey) return;
     const k = (event.key || '').toLowerCase();
-    if (k === 'a') {
-      event.preventDefault();
-      if (diffAcceptAll) diffAcceptAll.click();
-    } else if (k === 'r') {
-      event.preventDefault();
-      if (diffRejectAll) diffRejectAll.click();
-    } else if (k === 'c') {
+    if (k === 'c') {
       event.preventDefault();
       if (diffContinueChat) diffContinueChat.click();
     } else if (k === 'j' || k === 'n' || k === 'arrowdown') {
@@ -2794,23 +2729,7 @@
       renderRepairSession();
       return;
     }
-    // diff view 按钮: accept-all / reject-all / 继续对话
-    if (event.target.closest('[data-diff-accept-all]') || (event.target === diffAcceptAll)) {
-      if (_diffData) {
-        const hunks = (_diffData.files || []).flatMap((f) => f.hunks);
-        for (const h of hunks) setHunkStatus(h.id, 'accepted');
-        showToast(`已接受全部 ${hunks.length} 个 hunk`);
-      }
-      return;
-    }
-    if (event.target.closest('[data-diff-reject-all]') || (event.target === diffRejectAll)) {
-      if (_diffData) {
-        const hunks = (_diffData.files || []).flatMap((f) => f.hunks);
-        for (const h of hunks) setHunkStatus(h.id, 'rejected');
-        showToast(`已全部回滚 (${hunks.length} 个 hunk)`);
-      }
-      return;
-    }
+    // diff view 按钮: 继续对话
     if (event.target.closest('[data-diff-continue-chat]') || (event.target === diffContinueChat)) {
       openDiffChatDialog();
       return;
@@ -2832,19 +2751,9 @@
       openWorkspaceInVSCode();
       return;
     }
-    // diff view sidebar 单 hunk accept / reject
-    const hunkAction = event.target.closest('[data-hunk-action]');
-    if (hunkAction) {
-      const hid = Number(hunkAction.dataset.hunkId);
-      const action = hunkAction.dataset.hunkAction;
-      if (Number.isFinite(hid) && (action === 'accept' || action === 'reject')) {
-        setHunkStatus(hid, action === 'accept' ? 'accepted' : 'rejected');
-      }
-      return;
-    }
-    // diff view sidebar 卡片点击 = 跳到那个 hunk
+    // diff view sidebar 卡片点击 = 跳到那个 hunk（v1.0 整份提交，sidebar 只读）
     const hunkCard = event.target.closest('.diff-hunk-card');
-    if (hunkCard && !event.target.closest('[data-hunk-action]')) {
+    if (hunkCard) {
       const hid = Number(hunkCard.dataset.hunkId);
       if (Number.isFinite(hid)) {
         _diffActiveHunkId = hid;
@@ -2962,16 +2871,13 @@
       markOnboardingSeen();
     }
     if (event.target.closest('[data-open-github-setup]') && githubSetupDialog) {
-      // 升级路径: 升级前接受的 hunk 已经写到了后端, 不会丢.
-      // 检测这次点击是不是从 diff view 触发的 (button id = "diff-connect-github" 也在该 view 里).
+      // v1.0 整份提交：升级路径下 review view 仍保留，confirmFullDiffForSubmission
+      // 之前写回的 hunk-decisions 不会丢。
       const fromDiffView = diffView && !diffView.hidden;
-      if (fromDiffView) {
-        const acceptedBefore = Object.values(_diffHunkStatuses).filter((s) => s === 'accepted').length;
-        if (acceptedBefore > 0 && diffViewUpgrade) {
-          diffViewUpgrade.hidden = false;
-          diffViewUpgrade.textContent = `已升级到完整模式 · 之前接受的 ${acceptedBefore} 个 hunk 已保留`;
-          setTimeout(() => { if (diffViewUpgrade) diffViewUpgrade.hidden = true; }, 6000);
-        }
+      if (fromDiffView && diffViewUpgrade) {
+        diffViewUpgrade.hidden = false;
+        diffViewUpgrade.textContent = '已升级到完整模式 · 完整 diff 已保留';
+        setTimeout(() => { if (diffViewUpgrade) diffViewUpgrade.hidden = true; }, 6000);
       }
       githubSetupDialog.showModal();
     }

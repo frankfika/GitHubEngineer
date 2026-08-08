@@ -759,16 +759,6 @@ pre { padding: 13px 15px; overflow-x: auto; background: var(--surface-soft); bor
 .diff-hunk-card-stats { display: flex; gap: 10px; margin-top: 6px; font-family: "SF Mono", ui-monospace, monospace; font-size: 10px; color: var(--text-3); }
 .diff-hunk-card-stats .add { color: var(--success); }
 .diff-hunk-card-stats .rem { color: var(--danger); }
-.diff-hunk-card-actions { display: flex; gap: 6px; margin-top: 8px; }
-.diff-hunk-card-status { margin-left: auto; padding: 1px 6px; border-radius: 3px; font-size: 9.5px; font-weight: 600; }
-.diff-hunk-card-status-pending { color: var(--text-3); border: 1px solid var(--line-strong); }
-.diff-hunk-card-status-accepted { color: var(--success); background: color-mix(in srgb, var(--success) 14%, transparent); }
-.diff-hunk-card-status-rejected { color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, transparent); }
-.diff-hunk-card .hunk-btn { flex: 1; padding: 4px 8px; color: var(--text-2); background: var(--surface-soft); border: 1px solid var(--line-strong); border-radius: 5px; cursor: pointer; font: inherit; font-size: 10.5px; font-weight: 600; }
-.diff-hunk-card .hunk-btn-accept { color: var(--success); border-color: color-mix(in srgb, var(--success) 35%, var(--line)); }
-.diff-hunk-card .hunk-btn-accept:hover { background: color-mix(in srgb, var(--success) 14%, var(--surface-soft)); }
-.diff-hunk-card .hunk-btn-reject { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 35%, var(--line)); }
-.diff-hunk-card .hunk-btn-reject:hover { background: color-mix(in srgb, var(--danger) 14%, var(--surface-soft)); }
 .diff-view-cta { display: flex; align-items: center; gap: 10px; padding: 9px 18px; border-top: 1px solid var(--line); background: var(--surface); }
 .diff-view-status { flex: 1; color: var(--text-3); font-size: 11px; }
 .diff-view-status .count { color: var(--text); font-weight: 600; }
