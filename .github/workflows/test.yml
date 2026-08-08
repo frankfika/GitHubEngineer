@@ -11,6 +11,9 @@ permissions:
   contents: read
 
 jobs:
+  # Cross-platform pytest matrix (Ubuntu + macOS × Python 3.11 + 3.12).
+  # This is the long-standing behaviour: every push and PR runs the full
+  # 388-test suite on every supported target before reviewers look at it.
   pytest:
     name: pytest (${{ matrix.os }}, Python ${{ matrix.python }})
     runs-on: ${{ matrix.os }}
@@ -37,19 +40,79 @@ jobs:
         run: |
           pytest tests/ -v --cov=src --cov-report=xml --cov-report=term-missing
 
-      - name: Smoke check
+      - name: Smoke check (ghe --help + example config parses)
         run: |
           ghe --help
           python -c "import yaml; yaml.safe_load(open('.ghe/config.example.yml')); print('config.example.yml parses')"
 
-  lint:
-    name: compileall
+      - name: Upload coverage report (ubuntu + py3.12 only)
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          if-no-files-found: warn
+
+  # Integration gates that match the local `make verify` target.
+  # These steps are platform-independent, so we run them on a single
+  # ubuntu + py3.12 runner instead of paying the matrix cost four times.
+  integration:
+    name: integration (lint + YAML + build + twine + dry-run)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install -e ".[dev]"
-      - run: python -m compileall -q src tests
+
+      - name: Install package + dev extras
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Lint (compileall src + tests)
+        run: |
+          python -m compileall -q src tests
+
+      - name: Parse all workflow + template YAMLs
+        run: |
+          python - <<'PY'
+          import yaml
+          workflows = [
+              ".github/workflows/test.yml",
+              ".github/workflows/publish.yml",
+              ".github/workflows/desktop-release.yml",
+              ".github/workflows/maintainer-brief.example.yml",
+              ".github/dependabot.yml",
+              ".github/ISSUE_TEMPLATE/config.yml",
+              "action.yml",
+          ]
+          for f in workflows:
+              with open(f) as fh:
+                  yaml.safe_load(fh)
+          print("all YAML workflows + action.yml parse")
+          PY
+
+      - name: Build sdist + wheel
+        run: |
+          python -m build
+
+      - name: Twine check
+        run: |
+          python -m twine check dist/*.whl dist/*.tar.gz
+
+      - name: End-to-end dry run (offline, no network / secrets)
+        run: |
+          python benchmarks/dry_run.py
+
+      - name: Upload built distribution artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: dist
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+          if-no-files-found: error
