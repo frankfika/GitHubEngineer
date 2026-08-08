@@ -34,6 +34,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     走到 publish_queued。
   - 测试 388/388 通过（之前 387/387）。
 
+- **CI: test workflow now runs the full `make verify` pipeline on every
+  push and PR.** The previous `.github/workflows/test.yml` only ran
+  pytest + compileall, so YAML parse errors, broken sdist/wheel builds,
+  twine metadata regressions, and end-to-end main() regressions only
+  surfaced on the maintainer's machine. The workflow now has a second
+  `integration` job on ubuntu+py3.12 that runs all five remaining gates
+  (lint, YAML parse for every workflow + dependabot + action.yml,
+  `python -m build`, `python -m twine check`, and
+  `python benchmarks/dry_run.py`) so every push catches them. Pytest
+  stays in the cross-platform matrix; coverage XML from the
+  ubuntu+py3.12 cell uploads as an artifact.
+
+- **Fix: serve subprocess teardown no longer races with `tempfile`
+  cleanup.** `ServeSubcommandTest` spun up a long-lived server
+  subprocess in `setUpClass` and tore it down with SIGINT-then-kill,
+  but on some runners the OS still held open file handles inside the
+  server's `.ghe/repair-workspaces/.../.git/` directory at the moment
+  `tempfile.TemporaryDirectory.cleanup()` ran, surfacing as
+  `OSError: [Errno 39/66] Directory not empty` and a red CI cell even
+  though all 388 tests passed. `tempfile.TemporaryDirectory(...)` now
+  uses `ignore_cleanup_errors=True`; the temp dir is in `/tmp` so the
+  OS reclaims it on its own.
+
 ## [1.0.0] - 2026-08-05
 
 > **Note.** The v1.0.0 git tag was first cut at `f948c6f` (audit-round-5,

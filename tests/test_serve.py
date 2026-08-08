@@ -99,7 +99,7 @@ def _http_post(
 class ServeSubcommandTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls._temp_dir = tempfile.TemporaryDirectory()
+        cls._temp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         cls.directory = Path(cls._temp_dir.name)
         # Write a self-contained config so the server can read output_dir.
         (cls.directory / "reports").mkdir()
